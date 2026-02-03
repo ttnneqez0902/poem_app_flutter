@@ -11,12 +11,35 @@ final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
-  final themeIndex = prefs.getInt('themeMode') ?? 0;
-  themeNotifier.value = ThemeMode.values[themeIndex];
-  await isarService.db;
-  await notificationService.init();
+
+  ThemeMode initialTheme = ThemeMode.system;
+
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final themeIndex = prefs.getInt('themeMode') ?? 0;
+    initialTheme = ThemeMode.values[themeIndex];
+  } catch (e) {
+    debugPrint("Theme load failed: $e");
+  }
+
+  themeNotifier.value = initialTheme;
+
   runApp(const MyApp());
+
+  // 🔥 放到 runApp 之後，不要阻塞 UI
+  Future.microtask(() async {
+    try {
+      await isarService.db;
+    } catch (e) {
+      debugPrint("Isar init failed: $e");
+    }
+
+    try {
+      await notificationService.init();
+    } catch (e) {
+      debugPrint("Notification init failed: $e");
+    }
+  });
 }
 
 class MyApp extends StatelessWidget {

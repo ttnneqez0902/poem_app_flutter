@@ -1,6 +1,7 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
+import 'dart:io';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -10,75 +11,42 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _notifications =
   FlutterLocalNotificationsPlugin();
 
+  // ============================
+  // 初始化
+  // ============================
+
   Future<void> init() async {
     tz_data.initializeTimeZones();
 
-    // 🤖 Android 初始化設定
-    const AndroidInitializationSettings androidSettings =
+    const androidSettings =
     AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // 🍎 iOS 初始化設定 (Demo 關鍵：iPhone 才能收到通知)
-    const DarwinInitializationSettings iosSettings =
-    DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: false, // 初始化時先不要求權限，等使用者點擊按鈕再要求
+      requestBadgePermission: false,
+      requestSoundPermission: false,
     );
 
-    const InitializationSettings settings = InitializationSettings(
+    const settings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
     );
 
-    await _notifications.initialize(settings);
+    await _notifications.initialize(settings: settings);
   }
 
   // ============================
-  // 測試通知 (立即發送)
+  // 權限請求
   // ============================
-
-  Future<void> showInstantNotification() async {
-    const AndroidNotificationDetails androidDetails =
-    AndroidNotificationDetails(
-      'poem_test_channel',
-      '測試通知',
-      channelDescription: 'POEM 系統測試通知', // ✅ 補上 Description，符合 Google 規範
-      importance: Importance.max,
-      priority: Priority.high,
-    );
-
-    const NotificationDetails platformDetails =
-    NotificationDetails(android: androidDetails);
-
-    await _notifications.show(
-      999, // 測試用的 ID
-      "POEM 測試成功！",
-      "如果你看到這個，代表通知引擎運作正常。",
-      platformDetails,
-    );
-  }
-
-  // ============================
-  // 權限管理 (雙平台)
-  // ============================
-
-  Future<bool> checkExactAlarmPermission() async {
-    final platform = _notifications.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-
-    if (platform != null) {
-      return await platform.canScheduleExactNotifications() ?? false;
-    }
-    return true; // iOS 預設不需要此特定權限
-  }
 
   Future<void> requestPermissions() async {
-    // 🤖 Android 13+ 權限請求
+    // Android
     final android = _notifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
+
     await android?.requestNotificationsPermission();
 
-    // 🍎 iOS 權限請求 (關鍵：跳出「允許通知」視窗)
+    // iOS / macOS（不指定型別，避免 Android 編譯期爆炸）
     final ios = _notifications.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
 
@@ -89,23 +57,52 @@ class NotificationService {
     );
   }
 
+
+
+
   // ============================
-  // 每日提醒排程
+  // 立即通知
+  // ============================
+
+  Future<void> showInstantNotification() async {
+    const androidDetails = AndroidNotificationDetails(
+      'poem_test_channel',
+      '測試通知',
+      channelDescription: 'POEM 系統測試通知',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+
+    const details = NotificationDetails(android: androidDetails);
+
+    await _notifications.show(
+      id: 999,
+      title: 'POEM 測試成功！',
+      body: '如果你看到這個，代表通知引擎運作正常。',
+      notificationDetails: details,
+    );
+
+  }
+
+  // ============================
+  // 每日提醒
   // ============================
 
   Future<void> scheduleDailyReminder({
     required int hour,
     required int minute,
   }) async {
-    // ✅ 關鍵保險：先取消舊的 ID=0，避免重複堆疊
-    await _notifications.cancel(0);
+    await _notifications.cancel(id: 0);
+
+
+    final scheduledDate = _nextInstanceOfTime(hour, minute);
 
     await _notifications.zonedSchedule(
-      0, // 固定 ID，確保每天只有一個提醒
-      "POEM 檢測提醒",
-      "該記錄今天的皮膚狀況囉！保持紀錄能幫助醫生更好評估療效。",
-      _nextInstanceOfTime(hour, minute),
-      const NotificationDetails(
+      id: 0,
+      title: 'POEM 檢測提醒',
+      body: '該記錄今天的皮膚狀況囉！',
+      scheduledDate: scheduledDate,
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           'poem_reminder_channel',
           '每日提醒',
@@ -113,20 +110,24 @@ class NotificationService {
           importance: Importance.max,
           priority: Priority.high,
         ),
-        iOS: DarwinNotificationDetails(), // ✅ 確保 iOS 也能收到排程通知
+        iOS: DarwinNotificationDetails(),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time, // 每天同一時間觸發
+      matchDateTimeComponents: DateTimeComponents.time,
     );
   }
 
   tz.TZDateTime _nextInstanceOfTime(int hour, int minute) {
-    final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
+    final now = tz.TZDateTime.now(tz.local);
 
-    tz.TZDateTime scheduledDate =
-    tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    var scheduledDate = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
+    );
 
     if (scheduledDate.isBefore(now)) {
       scheduledDate = scheduledDate.add(const Duration(days: 1));
@@ -136,8 +137,10 @@ class NotificationService {
   }
 
   // ============================
-  // 取消所有通知
+  // 取消
   // ============================
 
-  Future<void> cancelAll() async => _notifications.cancelAll();
+  Future<void> cancelAll() async {
+    await _notifications.cancelAll();
+  }
 }

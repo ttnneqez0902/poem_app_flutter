@@ -111,11 +111,13 @@ class ExportService {
       }
     }
 
-    records.sort((a, b) => a.date.compareTo(b.date));
+    // ✅ Fix: 加上 ! (因為 date 是 nullable)
+    records.sort((a, b) => a.date!.compareTo(b.date!));
 
     // 限制範圍：最近 28 天
     final cutoffDate = DateTime.now().subtract(const Duration(days: 28));
-    final recentRecords = records.where((r) => r.date.isAfter(cutoffDate)).toList();
+    // ✅ Fix: 加上 !
+    final recentRecords = records.where((r) => r.date!.isAfter(cutoffDate)).toList();
     final analysisRecords = recentRecords.length >= 2 ? recentRecords : records;
 
     final trend = _analyzeTrend(analysisRecords);
@@ -150,7 +152,8 @@ class ExportService {
               pw.SizedBox(height: 30),
 
               _coverField("Patient ID (Anonymized)", patientID, boldFont),
-              _coverField("Observation Period", "${DateFormat('yyyy/MM/dd').format(records.first.date)} - ${DateFormat('yyyy/MM/dd').format(records.last.date)}", boldFont),
+              // ✅ Fix: 加上 !
+              _coverField("Observation Period", "${DateFormat('yyyy/MM/dd').format(records.first.date!)} - ${DateFormat('yyyy/MM/dd').format(records.last.date!)}", boldFont),
               _coverField("Generated At", DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now()), boldFont),
 
               pw.SizedBox(height: 30),
@@ -187,6 +190,7 @@ class ExportService {
                     pw.Padding(
                       padding: const pw.EdgeInsets.only(top: 6, left: 200),
                       child: pw.Text(
+                        // ✅ Fix: 加上 ! (lastDate!)
                         "Pattern detected: ${consecutiveAlert.streak} consecutive increases (+${consecutiveAlert.totalIncrease} pts, last on ${DateFormat('MM/dd').format(consecutiveAlert.lastDate!)})",
                         style: pw.TextStyle(fontSize: _fsBody, color: PdfColors.red800, fontWeight: pw.FontWeight.bold),
                       ),
@@ -282,7 +286,8 @@ class ExportService {
                     ...chunk.map((r) {
                       final imageBytes = photoCache[r.id];
                       return pw.TableRow(verticalAlignment: pw.TableCellVerticalAlignment.middle, children: [
-                        _tableCell(DateFormat('yyyy-MM-dd\nHH:mm').format(r.date)),
+                        // ✅ Fix: 加上 !
+                        _tableCell(DateFormat('yyyy-MM-dd\nHH:mm').format(r.date!)),
                         _tableCell("${r.totalScore}/28", isBold: true),
                         _tableCell(r.severityLabel, color: _getSeverityColor(r.totalScore)),
                         pw.Container(height: 100, padding: const pw.EdgeInsets.all(6), child: imageBytes != null ? pw.Image(pw.MemoryImage(imageBytes), fit: pw.BoxFit.contain) : pw.Center(child: pw.Text("No Image", style: const pw.TextStyle(color: PdfColors.grey600, fontSize: _fsSmall)))),
@@ -470,7 +475,9 @@ class ExportService {
   static PdfColor _getTrendColor(String label) { if (label == "Decreasing") return PdfColors.green700; if (label == "Increasing") return PdfColors.red700; return PdfColors.grey800; }
   static PdfColor _getSeverityColor(int score) { if (score <= 2) return PdfColors.blue700; if (score <= 7) return PdfColors.green700; if (score <= 16) return PdfColors.amber700; if (score <= 24) return PdfColors.orange700; return PdfColors.red700; }
   static bool _isHighScoreWeek(WeeklyStat w) => w.avg >= 17 || w.max >= 24;
-  static String _generateAnonID(List<PoemRecord> records) { if(records.isEmpty) return "AD-00000"; final hash = records.fold<int>(0, (h, r) => h ^ r.date.millisecondsSinceEpoch); return "AD-${(hash.abs() % 100000).toString().padLeft(5, '0')}"; }
+
+  // ✅ Fix: 加上 !
+  static String _generateAnonID(List<PoemRecord> records) { if(records.isEmpty) return "AD-00000"; final hash = records.fold<int>(0, (h, r) => h ^ r.date!.millisecondsSinceEpoch); return "AD-${(hash.abs() % 100000).toString().padLeft(5, '0')}"; }
 
   static ScoreTrend _analyzeTrend(List<PoemRecord> sortedRecords) {
     if (sortedRecords.length < 2) return ScoreTrend("Insufficient Data", 0, 0, 0);
@@ -482,9 +489,11 @@ class ExportService {
     double changeRate = 0;
     if (firstAvg >= 1) changeRate = ((firstAvg - secondAvg) / firstAvg) * 100;
     changeRate = changeRate.clamp(-100.0, 100.0);
-    final start = sortedRecords.first.date;
+    // ✅ Fix: 加上 !
+    final start = sortedRecords.first.date!;
     final xs = <double>[]; final ys = <double>[];
-    for (final r in sortedRecords) { xs.add(r.date.difference(start).inDays.toDouble()); ys.add(r.totalScore.toDouble()); }
+    // ✅ Fix: 加上 !
+    for (final r in sortedRecords) { xs.add(r.date!.difference(start).inDays.toDouble()); ys.add(r.totalScore.toDouble()); }
     final meanX = xs.reduce((a, b) => a + b) / xs.length;
     final meanY = ys.reduce((a, b) => a + b) / ys.length;
     double num = 0; double den = 0;
@@ -511,7 +520,8 @@ class ExportService {
     for (int i = 1; i < sortedRecords.length; i++) {
       if ((sortedRecords[i].totalScore - sortedRecords[i - 1].totalScore) >= config.rapidIncreaseThreshold) {
         count++;
-        dates.add(sortedRecords[i].date);
+        // ✅ Fix: 加上 !
+        dates.add(sortedRecords[i].date!);
       }
     }
     return RapidIncreaseStat(count, dates, config.rapidIncreaseThreshold);
@@ -532,7 +542,8 @@ class ExportService {
         if (streak > maxStreak) {
           maxStreak = streak;
           maxIncrease = totalIncrease;
-          lastDate = sortedRecords[i].date;
+          // ✅ Fix: 加上 !
+          lastDate = sortedRecords[i].date!;
         }
       } else {
         streak = 0;
@@ -545,16 +556,19 @@ class ExportService {
 
   static List<WeeklyStat> _buildWeeklyStats(List<PoemRecord> records) {
     if (records.isEmpty) return [];
-    final rawStart = records.first.date;
+    // ✅ Fix: 加上 !
+    final rawStart = records.first.date!;
     final start = DateTime(rawStart.year, rawStart.month, rawStart.day);
-    final end = records.last.date;
+    // ✅ Fix: 加上 !
+    final end = records.last.date!;
     final int totalDays = end.difference(start).inDays + 1;
     final int weeksCount = (totalDays / 7).ceil();
     final List<WeeklyStat> stats = [];
     for (int w = 0; w < weeksCount; w++) {
       final weekStart = start.add(Duration(days: w * 7));
       final weekEnd = weekStart.add(const Duration(days: 7));
-      final weekRecords = records.where((r) => r.date.isAfter(weekStart.subtract(const Duration(seconds: 1))) && r.date.isBefore(weekEnd)).toList();
+      // ✅ Fix: 加上 ! (isAfter/isBefore)
+      final weekRecords = records.where((r) => r.date!.isAfter(weekStart.subtract(const Duration(seconds: 1))) && r.date!.isBefore(weekEnd)).toList();
       if (weekRecords.isNotEmpty) {
         final scores = weekRecords.map((e) => e.totalScore).toList();
         stats.add(WeeklyStat(week: w + 1, start: weekStart, end: weekEnd.subtract(const Duration(days: 1)), avg: scores.reduce((a, b) => a + b) / scores.length, min: scores.reduce((a, b) => a < b ? a : b), max: scores.reduce((a, b) => a > b ? a : b)));

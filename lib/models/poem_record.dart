@@ -5,30 +5,27 @@ part 'poem_record.g.dart';
 @collection
 class PoemRecord {
   Id id = Isar.autoIncrement; // 自動生成 ID
-// 在 PoemRecord 類別大括號內加入
-  String get severity {
-    if (totalScore <= 2) return "無濕疹或極輕微";
-    if (totalScore <= 7) return "輕微";
-    if (totalScore <= 16) return "中度";
-    if (totalScore <= 24) return "重度";
-    return "極重度";
-  }
 
   @Index()
-  late DateTime date; // 紀錄日期
+  DateTime? date;
 
-  late List<int> scores; // 儲存 7 題的分數
-  String? imagePath; // 新增：儲存本地照片路徑
+  int? score;          // 儲存總分 (這對應到您 Survey 頁面算出來的 totalScore)
 
-  // 計算總分 $S = \sum_{i=1}^{n} score_i$
-  int get totalScore => scores.reduce((a, b) => a + b);
+  List<int>? answers;  // 儲存 7 題的答案細項 (這對應到您 Survey 頁面的 _answers)
 
-  // 嚴重程度判定邏輯
+  String? imagePath;   // 儲存照片路徑
+
+  int get totalScore => score ?? 0;
+
+  // 📋 嚴重程度判定邏輯 (getter)
+  // 自動根據 score 欄位回傳文字
   String get severityLabel {
-    if (totalScore <= 2) return "極輕微";
-    if (totalScore <= 7) return "輕微";
-    if (totalScore <= 16) return "中度";
-    if (totalScore <= 24) return "重度";
+    final s = score ?? 0; // 防呆：如果是 null 就當作 0 分
+
+    if (s <= 2) return "無濕疹或極輕微";
+    if (s <= 7) return "輕微";
+    if (s <= 16) return "中度";
+    if (s <= 24) return "重度";
     return "極重度";
   }
 }

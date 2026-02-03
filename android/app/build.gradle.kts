@@ -44,5 +44,5 @@ flutter {
 
 // --- 關鍵修正：dependencies 必須放在 android 區塊外面 ---
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

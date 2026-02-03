@@ -4,7 +4,6 @@ import 'poem_survey_screen.dart';
 import 'trend_chart_screen.dart';
 import 'history_list_screen.dart';
 import '../main.dart'; // 引用全域 notificationService 與 themeNotifier
-// ✂️ 已移除 ExportService 的引用
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -61,11 +60,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (picked != null && picked != _selectedTime) {
       setState(() => _selectedTime = picked);
       await _saveSettings();
+      // 如果原本就有開啟提醒，調整時間後要重新排程
       if (_isReminderOn) await _updateReminder();
     }
   }
 
   Future<void> _updateReminder() async {
+    // 這裡面已經包含了 requestPermissions
     await notificationService.requestPermissions();
     await notificationService.scheduleDailyReminder(
       hour: _selectedTime.hour,
@@ -114,7 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     context,
                     "查看趨勢圖表",
                     Icons.show_chart,
-                    // 這裡進入 TrendChartScreen 後，右上角有新的 PDF 匯出功能
                         () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen())),
                   ),
                   const SizedBox(height: 16),
@@ -156,12 +156,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 value: _isReminderOn,
                 onChanged: (bool value) async {
                   if (value) {
-                    bool hasPermission = await notificationService.checkExactAlarmPermission();
-                    if (!hasPermission) {
-                      if (!mounted) return;
-                      _showPermissionDialog();
-                      return;
-                    }
+                    // 🔥【關鍵修正】移除舊的 checkExactAlarmPermission 檢查
+                    // 直接呼叫 _updateReminder 即可，它會處理權限請求
                     await _updateReminder();
                   } else {
                     await notificationService.cancelAll();
@@ -243,6 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // 雖然現在沒用到，但保留這個函式不影響編譯
   void _showPermissionDialog() {
     showDialog(
       context: context,

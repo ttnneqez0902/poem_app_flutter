@@ -58,7 +58,7 @@ class HistoryListScreen extends StatelessWidget {
           ),
         ),
         title: Text(
-          DateFormat('yyyy年MM月dd日').format(record.date),
+          DateFormat('yyyy年MM月dd日').format(record.date!),
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text("嚴重程度：${record.severityLabel}"),
@@ -74,9 +74,9 @@ class HistoryListScreen extends StatelessWidget {
                 // 顯示 7 題的分數
                 Wrap(
                   spacing: 8,
-                  children: List.generate(record.scores.length, (i) {
+                  children: List.generate(record.answers!.length, (i) {
                     return Chip(
-                      label: Text("Q${i + 1}: ${record.scores[i]}分"),
+                      label: Text("Q${i + 1}: ${record.answers![i]}分"),
                       backgroundColor: Colors.grey.shade100,
                     );
                   }),

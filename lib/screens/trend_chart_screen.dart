@@ -56,7 +56,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     showDialog(
       context: context,
       builder: (context) {
-        // 使用區域變數暫存，避免直接影響主畫面，直到按下應用
         int tempRapid = _rapidThreshold;
         int tempStreak = _streakCount;
         int tempTotal = _streakTotal;
@@ -75,10 +74,8 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
               ],
             ),
             actions: [
-              // 🔥 新增：恢復預設按鈕
               TextButton(
                 onPressed: () {
-                  // 即時重置滑桿位置
                   setDialogState(() {
                     tempRapid = 8;
                     tempStreak = 3;
@@ -100,7 +97,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                 child: const Text("應用設定"),
               ),
             ],
-            // 調整按鈕排列，讓「恢復預設」在左邊，「取消/應用」在右邊 (Optional)
             actionsAlignment: MainAxisAlignment.spaceBetween,
           ),
         );
@@ -136,6 +132,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   Future<Uint8List?> _capturePng() async {
     try {
       await Future.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return null; // 防呆
       await WidgetsBinding.instance.endOfFrame;
       final RenderRepaintBoundary? boundary = _chartKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return null;
@@ -187,14 +184,18 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     final List<WeeklyStat> stats = [];
     if (records.isEmpty) return stats;
 
-    final start = records.first.date;
-    final end = records.last.date;
+    // ✅ 修正：加上 ! 強制轉型，因為 difference 不接受 null
+    final start = records.first.date!;
+    final end = records.last.date!;
+
     final int weeksCount = (end.difference(start).inDays / 7).ceil() + 1;
 
     for (int w = 0; w < weeksCount; w++) {
       final weekStart = start.add(Duration(days: w * 7));
       final weekEnd = weekStart.add(const Duration(days: 7));
-      final weekRecords = records.where((r) => r.date.isAfter(weekStart.subtract(const Duration(seconds: 1))) && r.date.isBefore(weekEnd));
+
+      // ✅ 修正：加上 !
+      final weekRecords = records.where((r) => r.date!.isAfter(weekStart.subtract(const Duration(seconds: 1))) && r.date!.isBefore(weekEnd));
 
       if (weekRecords.isNotEmpty) {
         final scores = weekRecords.map((e) => e.totalScore).toList();
@@ -226,17 +227,22 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
 
   List<PoemRecord> _getThinnedRecords(List<PoemRecord> all) {
     List<PoemRecord> filtered = all.where((r) {
+      if (r.date == null) return false; // 防呆
       if (_selectedDays == -1 && _customRange != null) {
-        return r.date.isAfter(_customRange!.start.subtract(const Duration(days: 1))) && r.date.isBefore(_customRange!.end.add(const Duration(days: 1)));
+        return r.date!.isAfter(_customRange!.start.subtract(const Duration(days: 1))) && r.date!.isBefore(_customRange!.end.add(const Duration(days: 1)));
       }
-      return DateTime.now().difference(r.date).inDays <= (_selectedDays - 1);
+      return DateTime.now().difference(r.date!).inDays <= (_selectedDays - 1);
     }).toList();
-    filtered.sort((a, b) => a.date.compareTo(b.date));
+
+    // ✅ 修正：加上 !
+    filtered.sort((a, b) => a.date!.compareTo(b.date!));
+
     List<PoemRecord> res = [];
     if (filtered.isNotEmpty) {
       res.add(filtered.first);
       for (int i = 1; i < filtered.length; i++) {
-        if (filtered[i].date.difference(res.last.date).inHours >= 12) res.add(filtered[i]);
+        // ✅ 修正：加上 !
+        if (filtered[i].date!.difference(res.last.date!).inHours >= 12) res.add(filtered[i]);
       }
     }
     return res;
@@ -251,7 +257,8 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       builder: (context, snapshot) {
         final allRecords = snapshot.data ?? [];
         final filtered = _getThinnedRecords(allRecords);
-        final bool isLongTerm = filtered.isNotEmpty && filtered.last.date.difference(filtered.first.date).inDays >= 20;
+        // ✅ 修正：加上 !
+        final bool isLongTerm = filtered.isNotEmpty && filtered.last.date!.difference(filtered.first.date!).inDays >= 20;
 
         return Scaffold(
           appBar: AppBar(
@@ -321,15 +328,18 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   LineChartData _mainData(List<PoemRecord> records, BuildContext context) {
     if (records.isEmpty) return LineChartData();
 
-    final startDate = records.first.date;
-    final endDate = records.last.date;
+    // ✅ 修正：加上 !
+    final startDate = records.first.date!;
+    final endDate = records.last.date!;
+
     final int daysSpan = endDate.difference(startDate).inDays;
     final bool isWeeklyMode = daysSpan >= 20;
 
     final weeklyStats = isWeeklyMode ? _buildWeeklyStats(records) : <WeeklyStat>[];
     final flareIndexes = isWeeklyMode ? _detectFlares(records) : <int>[];
 
-    final spots = records.map((r) => FlSpot(r.date.difference(startDate).inMinutes / 1440, r.totalScore.toDouble())).toList();
+    // ✅ 修正：加上 !
+    final spots = records.map((r) => FlSpot(r.date!.difference(startDate).inMinutes / 1440, r.totalScore.toDouble())).toList();
 
     final weeklyLine = weeklyStats.isNotEmpty
         ? LineChartBarData(
@@ -409,9 +419,10 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     final Map<double, String> labels = {};
     late DateFormat formatter;
 
-    final bool sameDay = records.first.date.year == records.last.date.year &&
-        records.first.date.month == records.last.date.month &&
-        records.first.date.day == records.last.date.day;
+    // ✅ 修正：加上 !
+    final bool sameDay = records.first.date!.year == records.last.date!.year &&
+        records.first.date!.month == records.last.date!.month &&
+        records.first.date!.day == records.last.date!.day;
 
     final bool isWeeklyMode = span >= 20;
 
@@ -434,25 +445,31 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     for (int i = 0; i < maxLabels; i++) {
       double targetOffset = i * step;
       PoemRecord closest = records.reduce((a, b) {
-        double diffA = (a.date.difference(start).inMinutes / 1440 - targetOffset).abs();
-        double diffB = (b.date.difference(start).inMinutes / 1440 - targetOffset).abs();
+        // ✅ 修正：加上 !
+        double diffA = (a.date!.difference(start).inMinutes / 1440 - targetOffset).abs();
+        double diffB = (b.date!.difference(start).inMinutes / 1440 - targetOffset).abs();
         return diffA < diffB ? a : b;
       });
-      double actualOffset = closest.date.difference(start).inMinutes / 1440;
-      labels[actualOffset] = formatter.format(closest.date);
+      // ✅ 修正：加上 !
+      double actualOffset = closest.date!.difference(start).inMinutes / 1440;
+      labels[actualOffset] = formatter.format(closest.date!); // 這裡也要 !
     }
 
-    labels[0.0] = formatter.format(records.first.date);
-    double lastOffset = records.last.date.difference(start).inMinutes / 1440;
-    labels[lastOffset] = formatter.format(records.last.date);
+    // ✅ 修正：加上 !
+    labels[0.0] = formatter.format(records.first.date!);
+    double lastOffset = records.last.date!.difference(start).inMinutes / 1440;
+    labels[lastOffset] = formatter.format(records.last.date!);
 
     return labels;
   }
 
   String _buildWeekSummary(List<PoemRecord> records) {
     if (records.isEmpty) return "";
-    final start = records.first.date;
-    final end = records.last.date;
+
+    // ✅ 修正：加上 !
+    final start = records.first.date!;
+    final end = records.last.date!;
+
     final int days = end.difference(start).inDays + 1;
     final int weeks = (days / 7).ceil();
     final String dateRange = "${DateFormat('MM/dd').format(start)} – ${DateFormat('MM/dd').format(end)}";

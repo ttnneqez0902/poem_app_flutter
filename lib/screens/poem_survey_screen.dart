@@ -44,12 +44,12 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     }
   }
 
-  void _onOptionSelected(int score) {
+  void _onOptionSelected(int questionIndex, int score) {
     setState(() {
-      _answers[_currentPage] = score;
+      _answers[questionIndex] = score;
     });
 
-    if (_currentPage < _questions.length - 1) {
+    if (questionIndex < _questions.length - 1) {
       Future.delayed(const Duration(milliseconds: 300), () {
         _pageController.nextPage(
           duration: const Duration(milliseconds: 400),
@@ -59,28 +59,71 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     }
   }
 
+
   void _saveAndFinish() async {
-    if (_answers.contains(-1)) {
+    debugPrint("🔥 SUBMIT PRESSED");
+    debugPrint("ANSWERS=$_answers");
+
+    // 1. 檢查是否有漏填的題目
+    final missing = <int>[];
+    for (int i = 0; i < _answers.length; i++) {
+      if (_answers[i] == -1) missing.add(i + 1);
+    }
+
+    if (missing.isNotEmpty) {
+      debugPrint("❌ missing=$missing");
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("請完成所有題目後再提交")),
+        SnackBar(content: Text("尚未完成題目：${missing.join(', ')}")),
+      );
+      // 跳轉到第一題沒寫的地方
+      _pageController.animateToPage(
+        missing.first - 1,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
       );
       return;
     }
 
-    // 修正級聯運算子語法
-    final newRecord = PoemRecord()
-      ..date = DateTime.now()
-      ..scores = List.from(_answers) // 建議使用 List.from 確保資料獨立
-      ..imagePath = _image?.path;
+    debugPrint("➡️ 準備儲存到 Isar 資料庫...");
 
-    await isarService.saveRecord(newRecord);
+    // 2. 🔥【修正重點】計算總分並建立 Record 物件 🔥
+    // 計算總分 (將 answers 裡的數字加總)
+    final totalScore = _answers.reduce((a, b) => a + b);
+
+    // 建立要儲存的物件
+    final newRecord = PoemRecord()
+      ..date = DateTime.now()      // 設定當前時間
+      ..score = totalScore         // 設定總分
+      ..answers = _answers         // 設定 7 題的答案細項
+      ..imagePath = _image?.path;  // 設定圖片路徑 (如果有拍照的話)
+
+    try {
+      // 3. 儲存資料
+      await isarService.saveRecord(newRecord);
+      debugPrint("✅ Isar 儲存成功！");
+
+    } catch (e, st) {
+      debugPrint("💥 儲存失敗: $e");
+      debugPrint(st.toString());
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("儲存失敗：$e")),
+      );
+      return;
+    }
 
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("檢測紀錄已儲存！")),
     );
+
+    // 回到上一頁 (首頁)
     Navigator.pop(context);
   }
+
+
 
   // 修改後的圖片選取邏輯
   Future<void> _pickImage(ImageSource source) async {
@@ -143,10 +186,11 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
         ),
       ),
       body: PageView.builder(
-        controller: _pageController,
-        onPageChanged: (index) => setState(() => _currentPage = index),
-        itemCount: _questions.length,
-        itemBuilder: (context, index) => _buildQuestionCard(index),
+          controller: _pageController,
+          physics: const NeverScrollableScrollPhysics(),
+          onPageChanged: (index) => setState(() => _currentPage = index),
+          itemCount: _questions.length,
+          itemBuilder: (context, index) => _buildQuestionCard(index),
       ),
       bottomNavigationBar: _buildBottomBar(),
     );
@@ -181,7 +225,13 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
           // --- 關鍵修正：呼叫您寫好的高對比組件 ---
           ...List.generate(_options.length, (optIndex) {
             bool isSelected = _answers[index] == optIndex;
-            return _buildOptionCard(context, _options[optIndex], optIndex, isSelected);
+            return _buildOptionCard(
+              context,
+              _options[optIndex],
+              index,
+              optIndex,
+              isSelected,
+            );
           }),
 
           if (index == 6) ...[
@@ -216,13 +266,13 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     );
   }
 
-  Widget _buildOptionCard(BuildContext context, String label, int value, bool isSelected) {
+Widget _buildOptionCard(BuildContext context, String label, int questionIndex, int value, bool isSelected,) {
     // 取得主題狀態與顏色
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = Theme.of(context).colorScheme.primary;
 
     return GestureDetector(
-      onTap: () => _onOptionSelected(value),
+      onTap: () => _onOptionSelected(questionIndex, value),
       child: AnimatedContainer( // 使用動畫容器，讓切換更平滑
         duration: const Duration(milliseconds: 200),
         width: double.infinity,
@@ -293,10 +343,14 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
             ),
             if (_currentPage == _questions.length - 1)
               ElevatedButton(
-                onPressed: _saveAndFinish,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                onPressed: () {
+                  debugPrint("🔥 SUBMIT PRESSED");
+                  debugPrint("currentPage=$_currentPage");
+                  debugPrint("answers=$_answers");
+                  _saveAndFinish();
+                },
                 child: const Text("提交結果並儲存"),
-              ),
+              )
           ],
         ),
       ),

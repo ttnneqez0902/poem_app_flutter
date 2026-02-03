@@ -1,0 +1,93 @@
+# Miscellaneous (雜項)
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ / Android Studio related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code related
+# 如果你的 .vscode 裡有個人的設定 (如絕對路徑)，建議把下面這行取消註解
+# .vscode/
+
+# Flutter/Dart/Pub related (核心)
+**/doc/api/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# ---------------------------------
+# Android related (這是你原本缺少的關鍵部分)
+# ---------------------------------
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties  <-- 🔥 超重要！絕對不能上傳這個 (含 SDK 路徑)
+**/android/GeneratedPluginRegistrant.java
+
+# ---------------------------------
+# iOS/XCode related (這是你原本缺少的關鍵部分)
+# ---------------------------------
+**/ios/**/*.mode1v3
+**/ios/**/*.mode2v3
+**/ios/**/*.moved-aside
+**/ios/**/*.pbxuser
+**/ios/**/*.perspectivev3
+**/ios/**/*sync/
+**/ios/**/.xcode.env.local
+**/ios/**/xcshareddata/
+**/ios/Flutter/Generated.xcconfig <-- 🔥 這是自動生成的，不要上傳
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/service_definitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# ---------------------------------
+# macOS related
+# ---------------------------------
+**/macos/Flutter/Flutter-Generated.xcconfig
+**/macos/Flutter/ephemeral/
+**/macos/Runner/GeneratedPluginRegistrant.*
+
+# ---------------------------------
+# Windows related
+# ---------------------------------
+**/windows/flutter/ephemeral/
+**/windows/flutter/generated_plugin_registrant.*
+
+# ---------------------------------
+# Linux related
+# ---------------------------------
+**/linux/flutter/ephemeral/
+**/linux/flutter/generated_plugin_registrant.*
+
+# ---------------------------------
+# Web related
+# ---------------------------------
+lib/generated_plugin_registrant.dart
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Exceptions to above rules
+!/android/app/src/main/res/raw/keep.xml

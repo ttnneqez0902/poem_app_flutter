@@ -1,0 +1,53 @@
+name: poem_app
+description: A new Flutter project for POEM self-check.
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 1. 介面與圖表
+  cupertino_icons: ^1.0.8
+  fl_chart: ^0.70.0        # 核心：畫給醫生看的趨勢圖
+  google_fonts: ^6.2.1    # 提升 UI 質感
+  image_picker: ^1.1.2
+  # 2. 本地資料庫 (Isar)
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+  path_provider: ^2.1.2
+  flutter_local_notifications: ^17.2.1
+  timezone: ^0.9.4
+  shared_preferences: ^2.2.3
+  # 3. 狀態管理與日期處理
+  flutter_riverpod: ^2.5.1
+  intl: ^0.19.0
+
+  # 4. 醫療報告導出
+  pdf: ^3.10.8
+  printing: ^5.11.1
+  share_plus: ^7.2.2  # 新增分享套件
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  isar_generator: ^3.1.0+1
+  build_runner: ^2.4.9
+
+# --- 關鍵修正區塊：與 dependencies 平級 ---
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - assets/fonts/
+
+  fonts:
+    - family: NotoSansTC
+      fonts:
+        - asset: assets/fonts/NotoSansTC-Regular.ttf
+
+    # 建議把數學字型分開宣告 (雖然 App UI 可能用不到，但結構較清晰)
+    - family: NotoSansMath
+      fonts:
+        - asset: assets/fonts/NotoSansMath-Regular.ttf

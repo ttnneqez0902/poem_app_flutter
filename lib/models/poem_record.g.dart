@@ -22,30 +22,46 @@ const PoemRecordSchema = CollectionSchema(
       name: r'answers',
       type: IsarType.longList,
     ),
-    r'date': PropertySchema(
+    r'dailyItch': PropertySchema(
       id: 1,
+      name: r'dailyItch',
+      type: IsarType.long,
+    ),
+    r'dailySleep': PropertySchema(
+      id: 2,
+      name: r'dailySleep',
+      type: IsarType.long,
+    ),
+    r'date': PropertySchema(
+      id: 3,
       name: r'date',
       type: IsarType.dateTime,
     ),
     r'imagePath': PropertySchema(
-      id: 2,
+      id: 4,
       name: r'imagePath',
       type: IsarType.string,
     ),
     r'score': PropertySchema(
-      id: 3,
+      id: 5,
       name: r'score',
       type: IsarType.long,
     ),
     r'severityLabel': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'severityLabel',
       type: IsarType.string,
     ),
     r'totalScore': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'totalScore',
       type: IsarType.long,
+    ),
+    r'type': PropertySchema(
+      id: 8,
+      name: r'type',
+      type: IsarType.byte,
+      enumMap: _PoemRecordtypeEnumValueMap,
     )
   },
   estimateSize: _poemRecordEstimateSize,
@@ -105,11 +121,14 @@ void _poemRecordSerialize(
   Map<Type, List<int>> allOffsets,
 ) {
   writer.writeLongList(offsets[0], object.answers);
-  writer.writeDateTime(offsets[1], object.date);
-  writer.writeString(offsets[2], object.imagePath);
-  writer.writeLong(offsets[3], object.score);
-  writer.writeString(offsets[4], object.severityLabel);
-  writer.writeLong(offsets[5], object.totalScore);
+  writer.writeLong(offsets[1], object.dailyItch);
+  writer.writeLong(offsets[2], object.dailySleep);
+  writer.writeDateTime(offsets[3], object.date);
+  writer.writeString(offsets[4], object.imagePath);
+  writer.writeLong(offsets[5], object.score);
+  writer.writeString(offsets[6], object.severityLabel);
+  writer.writeLong(offsets[7], object.totalScore);
+  writer.writeByte(offsets[8], object.type.index);
 }
 
 PoemRecord _poemRecordDeserialize(
@@ -120,10 +139,15 @@ PoemRecord _poemRecordDeserialize(
 ) {
   final object = PoemRecord();
   object.answers = reader.readLongList(offsets[0]);
-  object.date = reader.readDateTimeOrNull(offsets[1]);
+  object.dailyItch = reader.readLongOrNull(offsets[1]);
+  object.dailySleep = reader.readLongOrNull(offsets[2]);
+  object.date = reader.readDateTimeOrNull(offsets[3]);
   object.id = id;
-  object.imagePath = reader.readStringOrNull(offsets[2]);
-  object.score = reader.readLongOrNull(offsets[3]);
+  object.imagePath = reader.readStringOrNull(offsets[4]);
+  object.score = reader.readLongOrNull(offsets[5]);
+  object.type =
+      _PoemRecordtypeValueEnumMap[reader.readByteOrNull(offsets[8])] ??
+          RecordType.daily;
   return object;
 }
 
@@ -137,19 +161,35 @@ P _poemRecordDeserializeProp<P>(
     case 0:
       return (reader.readLongList(offset)) as P;
     case 1:
-      return (reader.readDateTimeOrNull(offset)) as P;
-    case 2:
-      return (reader.readStringOrNull(offset)) as P;
-    case 3:
       return (reader.readLongOrNull(offset)) as P;
+    case 2:
+      return (reader.readLongOrNull(offset)) as P;
+    case 3:
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 4:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 5:
+      return (reader.readLongOrNull(offset)) as P;
+    case 6:
+      return (reader.readString(offset)) as P;
+    case 7:
       return (reader.readLong(offset)) as P;
+    case 8:
+      return (_PoemRecordtypeValueEnumMap[reader.readByteOrNull(offset)] ??
+          RecordType.daily) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
 }
+
+const _PoemRecordtypeEnumValueMap = {
+  'daily': 0,
+  'weekly': 1,
+};
+const _PoemRecordtypeValueEnumMap = {
+  0: RecordType.daily,
+  1: RecordType.weekly,
+};
 
 Id _poemRecordGetId(PoemRecord object) {
   return object.id;
@@ -518,6 +558,151 @@ extension PoemRecordQueryFilter
         upper,
         includeUpper,
       );
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailyItchIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'dailyItch',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailyItchIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'dailyItch',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> dailyItchEqualTo(
+      int? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'dailyItch',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailyItchGreaterThan(
+    int? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'dailyItch',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> dailyItchLessThan(
+    int? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'dailyItch',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> dailyItchBetween(
+    int? lower,
+    int? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'dailyItch',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailySleepIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'dailySleep',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailySleepIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'dailySleep',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> dailySleepEqualTo(
+      int? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'dailySleep',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailySleepGreaterThan(
+    int? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'dailySleep',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      dailySleepLessThan(
+    int? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'dailySleep',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> dailySleepBetween(
+    int? lower,
+    int? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'dailySleep',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
     });
   }
 
@@ -1054,6 +1239,59 @@ extension PoemRecordQueryFilter
       ));
     });
   }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> typeEqualTo(
+      RecordType value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'type',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> typeGreaterThan(
+    RecordType value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'type',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> typeLessThan(
+    RecordType value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'type',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> typeBetween(
+    RecordType lower,
+    RecordType upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'type',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
 }
 
 extension PoemRecordQueryObject
@@ -1064,6 +1302,30 @@ extension PoemRecordQueryLinks
 
 extension PoemRecordQuerySortBy
     on QueryBuilder<PoemRecord, PoemRecord, QSortBy> {
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByDailyItch() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailyItch', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByDailyItchDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailyItch', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByDailySleep() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailySleep', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByDailySleepDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailySleep', Sort.desc);
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByDate() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'date', Sort.asc);
@@ -1123,10 +1385,46 @@ extension PoemRecordQuerySortBy
       return query.addSortBy(r'totalScore', Sort.desc);
     });
   }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByType() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'type', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByTypeDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'type', Sort.desc);
+    });
+  }
 }
 
 extension PoemRecordQuerySortThenBy
     on QueryBuilder<PoemRecord, PoemRecord, QSortThenBy> {
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByDailyItch() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailyItch', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByDailyItchDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailyItch', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByDailySleep() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailySleep', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByDailySleepDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'dailySleep', Sort.desc);
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByDate() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'date', Sort.asc);
@@ -1198,6 +1496,18 @@ extension PoemRecordQuerySortThenBy
       return query.addSortBy(r'totalScore', Sort.desc);
     });
   }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByType() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'type', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByTypeDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'type', Sort.desc);
+    });
+  }
 }
 
 extension PoemRecordQueryWhereDistinct
@@ -1205,6 +1515,18 @@ extension PoemRecordQueryWhereDistinct
   QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByAnswers() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'answers');
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByDailyItch() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'dailyItch');
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByDailySleep() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'dailySleep');
     });
   }
 
@@ -1240,6 +1562,12 @@ extension PoemRecordQueryWhereDistinct
       return query.addDistinctBy(r'totalScore');
     });
   }
+
+  QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByType() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'type');
+    });
+  }
 }
 
 extension PoemRecordQueryProperty
@@ -1253,6 +1581,18 @@ extension PoemRecordQueryProperty
   QueryBuilder<PoemRecord, List<int>?, QQueryOperations> answersProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'answers');
+    });
+  }
+
+  QueryBuilder<PoemRecord, int?, QQueryOperations> dailyItchProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'dailyItch');
+    });
+  }
+
+  QueryBuilder<PoemRecord, int?, QQueryOperations> dailySleepProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'dailySleep');
     });
   }
 
@@ -1283,6 +1623,12 @@ extension PoemRecordQueryProperty
   QueryBuilder<PoemRecord, int, QQueryOperations> totalScoreProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'totalScore');
+    });
+  }
+
+  QueryBuilder<PoemRecord, RecordType, QQueryOperations> typeProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'type');
     });
   }
 }

@@ -1,6 +1,7 @@
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/poem_record.dart';
+import '../models/poem_record.dart'; // 確保這行路徑正確
 
 class IsarService {
   late Future<Isar> db;
@@ -31,6 +32,19 @@ class IsarService {
   Future<List<PoemRecord>> getAllRecords() async {
     final isar = await db;
     return await isar.poemRecords.where().sortByDate().findAll();
+  }
+
+  // ✅ 新增：僅獲取每日紀錄 (給每日曲線用)
+  Future<List<PoemRecord>> getDailyLogs() async {
+    final isar = await db;
+    // 確保 .g.dart 更新後，這裡就不會噴紅字了
+    return await isar.poemRecords.filter().typeEqualTo(RecordType.daily).sortByDate().findAll();
+  }
+
+  // ✅ 新增：僅獲取每週 POEM (給長線趨勢用)
+  Future<List<PoemRecord>> getWeeklyPoems() async {
+    final isar = await db;
+    return await isar.poemRecords.filter().typeEqualTo(RecordType.weekly).sortByDate().findAll();
   }
 
   // 1. 新增：刪除單筆紀錄的方法

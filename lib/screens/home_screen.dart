@@ -4,6 +4,7 @@ import 'poem_survey_screen.dart';
 import 'trend_chart_screen.dart';
 import 'history_list_screen.dart';
 import '../main.dart'; // 引用全域 notificationService 與 themeNotifier
+import 'daily_check_in_screen.dart'; // ✅ 1. 務必加上這行 Import
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -106,7 +107,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   _buildMenuButton(
                     context,
-                    "開始新的檢測",
+                    "每日快速打卡 (只需30秒)",
+                    Icons.today,
+                        () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DailyCheckInScreen())),
+                  ),
+                  const SizedBox(height: 16), // ✅ 2. 補上間距，維持視覺一致性
+                  _buildMenuButton(
+                    context,
+                    "開始每週檢測",
                     Icons.add_task,
                         () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PoemSurveyScreen())),
                   ),

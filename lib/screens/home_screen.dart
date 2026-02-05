@@ -3,8 +3,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'poem_survey_screen.dart';
 import 'trend_chart_screen.dart';
 import 'history_list_screen.dart';
-import '../main.dart'; // 引用全域 notificationService 與 themeNotifier
-import 'daily_check_in_screen.dart'; // ✅ 1. 務必加上這行 Import
+import 'daily_check_in_screen.dart';
+import '../main.dart'; // 引用全域服務
+import '../models/poem_record.dart'; // 引用資料模型
+import '../widgets/uas7_tracker_card.dart'; // 🚀 引用新開發的進度卡片組件
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,6 +16,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // 📍 提醒與主題狀態
   bool _isReminderOn = false;
   TimeOfDay _selectedTime = const TimeOfDay(hour: 21, minute: 0);
 
@@ -23,7 +26,33 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadSettings();
   }
 
-  // --- 資料持久化邏輯 ---
+  // --- 🚀 核心邏輯：計算 UAS7 週期完成度 ---
+  // 此邏輯確保第一次做會算成 D1，符合七日累計定義
+  Future<Map<String, dynamic>> _getUas7Status() async {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final sevenDaysAgo = todayStart.subtract(const Duration(days: 6));
+
+    // 1. 從 Isar 抓取過去 7 天的所有量表紀錄
+    final allRecords = await isarService.getRecordsInRange(sevenDaysAgo, now);
+
+    // 2. 僅過濾出 UAS7 類型的紀錄
+    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList();
+
+    // 3. 檢查今天是否已經完成過紀錄
+    bool isTodayDone = uas7Records.any((r) =>
+    r.date!.year == now.year &&
+        r.date!.month == now.month &&
+        r.date!.day == now.day
+    );
+
+    return {
+      'completedCount': uas7Records.length, // 累計完成天數 (1~7)，決定點亮幾顆球
+      'isTodayDone': isTodayDone,           // 決定標題文字與圖示狀態
+    };
+  }
+
+  // --- ⚙️ 設定持久化邏輯 ---
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
@@ -42,32 +71,13 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setInt('reminderMinute', _selectedTime.minute);
   }
 
-  // --- 主題切換邏輯 ---
-
   Future<void> _updateTheme(ThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('themeMode', mode.index);
     themeNotifier.value = mode;
   }
 
-  // --- 提醒功能邏輯 ---
-
-  Future<void> _pickTime() async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: _selectedTime,
-    );
-
-    if (picked != null && picked != _selectedTime) {
-      setState(() => _selectedTime = picked);
-      await _saveSettings();
-      // 如果原本就有開啟提醒，調整時間後要重新排程
-      if (_isReminderOn) await _updateReminder();
-    }
-  }
-
   Future<void> _updateReminder() async {
-    // 這裡面已經包含了 requestPermissions
     await notificationService.requestPermissions();
     await notificationService.scheduleDailyReminder(
       hour: _selectedTime.hour,
@@ -75,121 +85,142 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- UI 建構 ---
+  // --- 🎨 UI 建構 ---
 
   @override
   Widget build(BuildContext context) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("POEM 自我檢測"),
+        title: const Text("皮膚健康管理"),
         centerTitle: true,
         elevation: 0,
-        backgroundColor: Theme.of(context).brightness == Brightness.dark
-            ? null
-            : Colors.blue.shade50,
+        backgroundColor: isDarkMode ? null : Colors.blue.shade50,
       ),
       body: SingleChildScrollView(
         child: Column(
           children: [
-            const SizedBox(height: 30),
-            const Icon(Icons.health_and_safety, size: 100, color: Colors.blue),
-            const SizedBox(height: 10),
-            Text(
-              "濕疹症狀追蹤",
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
 
-            // 主要功能按鈕區
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Column(
-                children: [
-                  _buildMenuButton(
-                    context,
-                    "每日快速打卡 (只需30秒)",
-                    Icons.today,
-                        () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DailyCheckInScreen())),
-                  ),
-                  const SizedBox(height: 16), // ✅ 2. 補上間距，維持視覺一致性
-                  _buildMenuButton(
-                    context,
-                    "開始每週檢測",
-                    Icons.add_task,
-                        () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PoemSurveyScreen())),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildMenuButton(
-                    context,
-                    "查看趨勢圖表",
-                    Icons.show_chart,
-                        () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen())),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildMenuButton(
-                    context,
-                    "歷史紀錄列表",
-                    Icons.history,
-                        () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen())),
-                  ),
-                ],
-              ),
-            ),
+            // 📍 1. 臨床進度卡片：動態顯示 UAS7 完成度
+            // 使用 FutureBuilder 確保資料庫查詢完畢後才渲染
+            FutureBuilder<Map<String, dynamic>>(
+              future: _getUas7Status(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const SizedBox(height: 160);
 
-            const SizedBox(height: 30),
-            const Divider(),
-
-            // 設定區塊：主題與提醒
-            ValueListenableBuilder<ThemeMode>(
-              valueListenable: themeNotifier,
-              builder: (context, currentMode, _) {
-                return ListTile(
-                  leading: const Icon(Icons.palette_outlined, color: Colors.blue),
-                  title: const Text("外觀主題設定"),
-                  subtitle: Text(_getThemeName(currentMode)),
-                  onTap: _showThemePickerDialog,
+                final data = snapshot.data!;
+                return Uas7TrackerCard(
+                  completedCount: data['completedCount'],
+                  isTodayDone: data['isTodayDone'],
                 );
               },
             ),
 
-            ListTile(
-              onTap: _pickTime,
-              leading: Icon(
-                _isReminderOn ? Icons.notifications_active : Icons.notifications_off,
-                color: _isReminderOn ? Colors.blue : Colors.grey,
-              ),
-              title: const Text("每日提醒時間"),
-              subtitle: Text("目前設定：${_selectedTime.format(context)} (點擊可修改)"),
-              trailing: Switch(
-                value: _isReminderOn,
-                onChanged: (bool value) async {
-                  if (value) {
-                    // 🔥【關鍵修正】移除舊的 checkExactAlarmPermission 檢查
-                    // 直接呼叫 _updateReminder 即可，它會處理權限請求
-                    await _updateReminder();
-                  } else {
-                    await notificationService.cancelAll();
-                  }
-                  setState(() => _isReminderOn = value);
-                  await _saveSettings();
-                },
-              ),
+            const SizedBox(height: 10),
+            Text(
+              "症狀紀錄與追蹤",
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 30),
 
-            const SizedBox(height: 20),
-            TextButton.icon(
-              onPressed: () => notificationService.showInstantNotification(),
-              icon: const Icon(Icons.vibration),
-              label: const Text("測試通知功能"),
-            ),
-            const SizedBox(height: 40), // 底部留白
+            // 📍 2. 主要導航按鈕區
+            _buildNavigationMenu(context),
+
+            const SizedBox(height: 30),
+            const Divider(),
+
+            // 📍 3. 下方設定與偏好區塊
+            _buildSettingsSection(context, isDarkMode),
+            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
 
-  // --- 輔助組件與對話框 ---
+  Widget _buildNavigationMenu(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: Column(
+        children: [
+          _buildMenuButton(
+            context,
+            "開始自我檢測",
+            Icons.add_task,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PoemSurveyScreen())),
+          ),
+          const SizedBox(height: 16),
+          _buildMenuButton(
+            context,
+            "每日快速打卡",
+            Icons.today,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DailyCheckInScreen())),
+          ),
+          const SizedBox(height: 16),
+          _buildMenuButton(
+            context,
+            "查看趨勢圖表",
+            Icons.show_chart,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen())),
+          ),
+          const SizedBox(height: 16),
+          _buildMenuButton(
+            context,
+            "歷史紀錄列表",
+            Icons.history,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen())),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsSection(BuildContext context, bool isDarkMode) {
+    return Column(
+      children: [
+        ValueListenableBuilder<ThemeMode>(
+          valueListenable: themeNotifier,
+          builder: (context, currentMode, _) {
+            return ListTile(
+              leading: const Icon(Icons.palette_outlined, color: Colors.blue),
+              title: const Text("外觀主題設定"),
+              onTap: _showThemePickerDialog,
+            );
+          },
+        ),
+        ListTile(
+          onTap: () async {
+            final TimeOfDay? picked = await showTimePicker(context: context, initialTime: _selectedTime);
+            if (picked != null) {
+              setState(() => _selectedTime = picked);
+              await _saveSettings();
+              if (_isReminderOn) await _updateReminder();
+            }
+          },
+          leading: Icon(
+              _isReminderOn ? Icons.notifications_active : Icons.notifications_off,
+              color: _isReminderOn ? Colors.blue : Colors.grey
+          ),
+          title: const Text("每日提醒時間"),
+          subtitle: Text("目前設定：${_selectedTime.format(context)}"),
+          trailing: Switch(
+            value: _isReminderOn,
+            onChanged: (bool value) async {
+              if (value) {
+                await _updateReminder();
+              } else {
+                await notificationService.cancelAll();
+              }
+              setState(() => _isReminderOn = value);
+              await _saveSettings();
+            },
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildMenuButton(BuildContext context, String label, IconData icon, VoidCallback onPressed) {
     return SizedBox(
@@ -201,7 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
         label: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         style: ElevatedButton.styleFrom(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          elevation: 2,
+          elevation: 1,
         ),
       ),
     );
@@ -216,60 +247,25 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             RadioListTile<ThemeMode>(
-              title: const Text("跟隨系統設定"),
-              value: ThemeMode.system,
-              groupValue: themeNotifier.value,
-              onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); },
+                title: const Text("跟隨系統"),
+                value: ThemeMode.system,
+                groupValue: themeNotifier.value,
+                onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); }
             ),
             RadioListTile<ThemeMode>(
-              title: const Text("淺色模式"),
-              value: ThemeMode.light,
-              groupValue: themeNotifier.value,
-              onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); },
+                title: const Text("淺色模式"),
+                value: ThemeMode.light,
+                groupValue: themeNotifier.value,
+                onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); }
             ),
             RadioListTile<ThemeMode>(
-              title: const Text("深色模式"),
-              value: ThemeMode.dark,
-              groupValue: themeNotifier.value,
-              onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); },
+                title: const Text("深色模式"),
+                value: ThemeMode.dark,
+                groupValue: themeNotifier.value,
+                onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); }
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  String _getThemeName(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.system: return "跟隨系統";
-      case ThemeMode.light: return "淺色模式";
-      case ThemeMode.dark: return "深色模式";
-    }
-  }
-
-  // 雖然現在沒用到，但保留這個函式不影響編譯
-  void _showPermissionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.alarm_on, color: Colors.blue),
-            SizedBox(width: 10),
-            Text("需要鬧鐘權限"),
-          ],
-        ),
-        content: const Text("為了確保 POEM 檢測提醒能準時發送，請在系統設定中開啟「鬧鐘與提醒」權限。"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("稍後再說")),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              notificationService.requestPermissions();
-            },
-            child: const Text("前往設定"),
-          ),
-        ],
       ),
     );
   }

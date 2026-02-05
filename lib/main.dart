@@ -1,92 +1,73 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'controllers/bootstrap_controller.dart';
 import 'services/isar_service.dart';
 import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
+import 'screens/consent_screen.dart';
 
-// 全域服務實例
+// ✅ 全域實例 (確保其他 Screen 能透過 import '../main.dart' 存取)
 final isarService = IsarService();
 final notificationService = NotificationService();
+final bootstrapController = BootstrapController();
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  ThemeMode initialTheme = ThemeMode.system;
-
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final themeIndex = prefs.getInt('themeMode') ?? 0;
-    initialTheme = ThemeMode.values[themeIndex];
-  } catch (e) {
-    debugPrint("Theme load failed: $e");
-  }
-
-  themeNotifier.value = initialTheme;
-
   runApp(const MyApp());
-
-  // 🔥 放到 runApp 之後，不要阻塞 UI
-  Future.microtask(() async {
-    try {
-      await isarService.db;
-    } catch (e) {
-      debugPrint("Isar init failed: $e");
-    }
-
-    try {
-      await notificationService.init();
-    } catch (e) {
-      debugPrint("Notification init failed: $e");
-    }
-  });
+  bootstrapController.start();
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeNotifier,
-      builder: (_, ThemeMode currentMode, __) {
-        return MaterialApp(
-          title: 'POEM 自我檢測',
-          debugShowCheckedModeBanner: false,
-          themeMode: currentMode,
-          theme: ThemeData(
-            useMaterial3: true,
-            colorSchemeSeed: Colors.blue,
-            brightness: Brightness.light,
-          ),
-          // 深色主題：特別優化高對比度
-          darkTheme: ThemeData(
-            useMaterial3: true,
-            brightness: Brightness.dark,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.blue,
-              brightness: Brightness.dark,
-              surface: const Color(0xFF121212), // 底部背景
-              onSurface: Colors.white, // 確保文字為純白
-              // 針對選項卡片：使用較亮的灰色區分背景
-              surfaceContainerLow: const Color(0xFF2C2C2C),
-            ),
-            // 修正錯誤：使用 CardThemeData 避開 PDF 套件衝突
-            cardTheme: const CardThemeData(
-              color: Color(0xFF2C2C2C),
-              elevation: 0,
-              margin: EdgeInsets.symmetric(vertical: 8),
-            ),
-            // 強度文字對比，確保問卷選項清晰
-            textTheme: const TextTheme(
-              bodyMedium: TextStyle(color: Color(0xFFE0E0E0), fontSize: 16),
-              bodyLarge: TextStyle(color: Colors.white),
-              titleMedium: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-          ),
-          home: const HomeScreen(),
-        );
+      builder: (_, mode, __) => MaterialApp(
+        title: '皮膚健康追蹤',
+        debugShowCheckedModeBanner: false,
+        themeMode: mode,
+        theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blue),
+        home: const BootstrapScreen(),
+      ),
+    );
+  }
+}
+
+class BootstrapScreen extends StatelessWidget {
+  const BootstrapScreen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        bootstrapController.stage,
+        bootstrapController.error,
+        bootstrapController.needsConsent,
+      ]),
+      builder: (context, _) {
+        if (bootstrapController.stage.value == BootStage.ready) return const HomeScreen();
+        if (bootstrapController.error.value != BootstrapError.none) return _buildErrorUI();
+        if (bootstrapController.needsConsent.value) return const ConsentScreen();
+        return _buildLoadingUI();
       },
     );
+  }
+
+  Widget _buildLoadingUI() {
+    return Scaffold(body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      const Icon(Icons.health_and_safety, size: 80, color: Colors.blue),
+      const SizedBox(height: 24),
+      LinearProgressIndicator(value: bootstrapController.progress.value, minHeight: 6),
+      const SizedBox(height: 16),
+      const Text("臨床引擎啟動中...", style: TextStyle(fontWeight: FontWeight.bold)),
+    ])));
+  }
+
+  Widget _buildErrorUI() {
+    return Scaffold(body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      const Icon(Icons.error, color: Colors.red, size: 60),
+      Text(bootstrapController.errorMessage.value),
+      ElevatedButton(onPressed: () => bootstrapController.start(), child: const Text("重試")),
+    ])));
   }
 }

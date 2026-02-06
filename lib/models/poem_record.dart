@@ -3,7 +3,7 @@ import 'package:isar/isar.dart';
 part 'poem_record.g.dart';
 
 enum RecordType { daily, weekly }
-enum ScaleType { poem, uas7, scorad }
+enum ScaleType { poem, uas7, scorad, adct } // 🚀 新增 adct
 
 @collection
 class PoemRecord {

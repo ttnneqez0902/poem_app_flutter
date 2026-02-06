@@ -3,10 +3,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'poem_survey_screen.dart';
 import 'trend_chart_screen.dart';
 import 'history_list_screen.dart';
-import 'daily_check_in_screen.dart';
-import '../main.dart'; // 引用全域服務
-import '../models/poem_record.dart'; // 引用資料模型
-import '../widgets/uas7_tracker_card.dart'; // 🚀 引用新開發的進度卡片組件
+import '../main.dart';
+import '../models/poem_record.dart';
+import '../widgets/uas7_tracker_card.dart';
+import '../widgets/weekly_tracker_card.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,76 +16,45 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // 📍 提醒與主題狀態
-  bool _isReminderOn = false;
-  TimeOfDay _selectedTime = const TimeOfDay(hour: 21, minute: 0);
+  // 🚀 支援四項量表無限滑動 (UAS7, ADCT, POEM, SCORAD)
+  final PageController _pageController = PageController(initialPage: 400);
+  ScaleType _selectedScaleTask = ScaleType.adct;
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
   }
 
-  // --- 🚀 核心邏輯：計算 UAS7 週期完成度 ---
-  // 此邏輯確保第一次做會算成 D1，符合七日累計定義
-  Future<Map<String, dynamic>> _getUas7Status() async {
+  // --- 🚀 核心數據邏輯：計算各量表狀態與 UAS7 日期鎖定 ---
+  Future<Map<String, dynamic>> _getTrackerData() async {
     final now = DateTime.now();
-    final todayStart = DateTime(now.year, now.month, now.day);
-    final sevenDaysAgo = todayStart.subtract(const Duration(days: 6));
+    final today = DateTime(now.year, now.month, now.day);
+    final allRecords = await isarService.getAllRecords();
 
-    // 1. 從 Isar 抓取過去 7 天的所有量表紀錄
-    final allRecords = await isarService.getRecordsInRange(sevenDaysAgo, now);
+    // 1. UAS7 邏輯：鎖定 7 天週期的起始日
+    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList()
+      ..sort((a, b) => a.date!.compareTo(b.date!));
 
-    // 2. 僅過濾出 UAS7 類型的紀錄
-    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList();
-
-    // 3. 檢查今天是否已經完成過紀錄
-    bool isTodayDone = uas7Records.any((r) =>
-    r.date!.year == now.year &&
-        r.date!.month == now.month &&
-        r.date!.day == now.day
-    );
+    DateTime uas7Start;
+    if (uas7Records.isEmpty) {
+      uas7Start = today;
+    } else {
+      final firstDate = uas7Records.first.date!;
+      final DateTime firstDayStart = DateTime(firstDate.year, firstDate.month, firstDate.day);
+      int offset = (today.difference(firstDayStart).inDays / 7).floor() * 7;
+      uas7Start = firstDayStart.add(Duration(days: offset));
+    }
 
     return {
-      'completedCount': uas7Records.length, // 累計完成天數 (1~7)，決定點亮幾顆球
-      'isTodayDone': isTodayDone,           // 決定標題文字與圖示狀態
+      'uas7Start': uas7Start,
+      'uas7Status': List.generate(7, (i) => uas7Records.any((r) =>
+      r.date!.year == uas7Start.add(Duration(days: i)).year &&
+          r.date!.day == uas7Start.add(Duration(days: i)).day)),
+      'adct': allRecords.where((r) => r.scaleType == ScaleType.adct).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
+      'poem': allRecords.where((r) => r.scaleType == ScaleType.poem).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
+      'scorad': allRecords.where((r) => r.scaleType == ScaleType.scorad).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
     };
   }
-
-  // --- ⚙️ 設定持久化邏輯 ---
-
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isReminderOn = prefs.getBool('isReminderOn') ?? false;
-      int hour = prefs.getInt('reminderHour') ?? 21;
-      int minute = prefs.getInt('reminderMinute') ?? 0;
-      _selectedTime = TimeOfDay(hour: hour, minute: minute);
-    });
-  }
-
-  Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isReminderOn', _isReminderOn);
-    await prefs.setInt('reminderHour', _selectedTime.hour);
-    await prefs.setInt('reminderMinute', _selectedTime.minute);
-  }
-
-  Future<void> _updateTheme(ThemeMode mode) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('themeMode', mode.index);
-    themeNotifier.value = mode;
-  }
-
-  Future<void> _updateReminder() async {
-    await notificationService.requestPermissions();
-    await notificationService.scheduleDailyReminder(
-      hour: _selectedTime.hour,
-      minute: _selectedTime.minute,
-    );
-  }
-
-  // --- 🎨 UI 建構 ---
 
   @override
   Widget build(BuildContext context) {
@@ -93,46 +62,40 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("皮膚健康管理"),
-        centerTitle: true,
-        elevation: 0,
-        backgroundColor: isDarkMode ? null : Colors.blue.shade50,
+          title: const Text("皮膚健康管理", style: TextStyle(fontWeight: FontWeight.bold)),
+          centerTitle: true,
+          backgroundColor: isDarkMode ? null : Colors.blue.shade50
       ),
       body: SingleChildScrollView(
         child: Column(
           children: [
             const SizedBox(height: 20),
-
-            // 📍 1. 臨床進度卡片：動態顯示 UAS7 完成度
-            // 使用 FutureBuilder 確保資料庫查詢完畢後才渲染
-            FutureBuilder<Map<String, dynamic>>(
-              future: _getUas7Status(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const SizedBox(height: 160);
-
-                final data = snapshot.data!;
-                return Uas7TrackerCard(
-                  completedCount: data['completedCount'],
-                  isTodayDone: data['isTodayDone'],
-                );
-              },
-            ),
-
-            const SizedBox(height: 10),
-            Text(
-              "症狀紀錄與追蹤",
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 30),
-
-            // 📍 2. 主要導航按鈕區
-            _buildNavigationMenu(context),
-
-            const SizedBox(height: 30),
+            _buildElderlyFriendlyDropdown(),
+            const SizedBox(height: 20),
+            _buildLargeNavigationMenu(context),
+            const SizedBox(height: 24),
             const Divider(),
-
-            // 📍 3. 下方設定與偏好區塊
-            _buildSettingsSection(context, isDarkMode),
+            _buildSwiperHeader(),
+            SizedBox(
+              height: 265,
+              child: FutureBuilder<Map<String, dynamic>>(
+                future: _getTrackerData(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                  final data = snapshot.data!;
+                  return PageView.builder(
+                    controller: _pageController,
+                    itemBuilder: (context, index) {
+                      final mode = index % 4; // 🚀 四卡片循環
+                      if (mode == 0) return Uas7TrackerCard(startDate: data['uas7Start'], completionStatus: data['uas7Status']);
+                      if (mode == 1) return WeeklyTrackerCard(type: ScaleType.adct, history: data['adct']);
+                      if (mode == 2) return WeeklyTrackerCard(type: ScaleType.poem, history: data['poem']);
+                      return WeeklyTrackerCard(type: ScaleType.scorad, history: data['scorad']);
+                    },
+                  );
+                },
+              ),
+            ),
             const SizedBox(height: 40),
           ],
         ),
@@ -140,133 +103,50 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildNavigationMenu(BuildContext context) {
+  Widget _buildElderlyFriendlyDropdown() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: Column(
-        children: [
-          _buildMenuButton(
-            context,
-            "開始自我檢測",
-            Icons.add_task,
-                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PoemSurveyScreen())),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.blue.shade200, width: 2)),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<ScaleType>(
+            value: _selectedScaleTask,
+            isExpanded: true,
+            icon: const Icon(Icons.arrow_circle_down_rounded, color: Colors.blue, size: 30),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+            items: [
+              DropdownMenuItem(value: ScaleType.adct, child: const Text("ADCT 每週控制評估")),
+              DropdownMenuItem(value: ScaleType.poem, child: const Text("POEM 每週濕疹評估")),
+              DropdownMenuItem(value: ScaleType.uas7, child: const Text("UAS7 每日活性紀錄")),
+              DropdownMenuItem(value: ScaleType.scorad, child: const Text("SCORAD 綜合評分")),
+            ],
+            onChanged: (val) => setState(() => _selectedScaleTask = val!),
           ),
-          const SizedBox(height: 16),
-          _buildMenuButton(
-            context,
-            "每日快速打卡",
-            Icons.today,
-                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DailyCheckInScreen())),
-          ),
-          const SizedBox(height: 16),
-          _buildMenuButton(
-            context,
-            "查看趨勢圖表",
-            Icons.show_chart,
-                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen())),
-          ),
-          const SizedBox(height: 16),
-          _buildMenuButton(
-            context,
-            "歷史紀錄列表",
-            Icons.history,
-                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen())),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingsSection(BuildContext context, bool isDarkMode) {
-    return Column(
-      children: [
-        ValueListenableBuilder<ThemeMode>(
-          valueListenable: themeNotifier,
-          builder: (context, currentMode, _) {
-            return ListTile(
-              leading: const Icon(Icons.palette_outlined, color: Colors.blue),
-              title: const Text("外觀主題設定"),
-              onTap: _showThemePickerDialog,
-            );
-          },
-        ),
-        ListTile(
-          onTap: () async {
-            final TimeOfDay? picked = await showTimePicker(context: context, initialTime: _selectedTime);
-            if (picked != null) {
-              setState(() => _selectedTime = picked);
-              await _saveSettings();
-              if (_isReminderOn) await _updateReminder();
-            }
-          },
-          leading: Icon(
-              _isReminderOn ? Icons.notifications_active : Icons.notifications_off,
-              color: _isReminderOn ? Colors.blue : Colors.grey
-          ),
-          title: const Text("每日提醒時間"),
-          subtitle: Text("目前設定：${_selectedTime.format(context)}"),
-          trailing: Switch(
-            value: _isReminderOn,
-            onChanged: (bool value) async {
-              if (value) {
-                await _updateReminder();
-              } else {
-                await notificationService.cancelAll();
-              }
-              setState(() => _isReminderOn = value);
-              await _saveSettings();
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMenuButton(BuildContext context, String label, IconData icon, VoidCallback onPressed) {
-    return SizedBox(
-      width: double.infinity,
-      height: 60,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        label: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        style: ElevatedButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          elevation: 1,
         ),
       ),
     );
   }
 
-  void _showThemePickerDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("選擇外觀模式"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<ThemeMode>(
-                title: const Text("跟隨系統"),
-                value: ThemeMode.system,
-                groupValue: themeNotifier.value,
-                onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); }
-            ),
-            RadioListTile<ThemeMode>(
-                title: const Text("淺色模式"),
-                value: ThemeMode.light,
-                groupValue: themeNotifier.value,
-                onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); }
-            ),
-            RadioListTile<ThemeMode>(
-                title: const Text("深色模式"),
-                value: ThemeMode.dark,
-                groupValue: themeNotifier.value,
-                onChanged: (mode) { _updateTheme(mode!); Navigator.pop(context); }
-            ),
-          ],
-        ),
-      ),
+  Widget _buildLargeNavigationMenu(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 30),
+      child: Column(children: [
+        _buildLargeMenuButton(context, "開始自我檢測", Icons.play_circle_fill_rounded, Colors.blue.shade700,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: _selectedScaleTask)))),
+        const SizedBox(height: 16),
+        _buildLargeMenuButton(context, "查看趨勢圖表", Icons.bar_chart_rounded, Colors.teal.shade700,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen()))),
+        const SizedBox(height: 16),
+        _buildLargeMenuButton(context, "歷史紀錄列表", Icons.list_alt_rounded, Colors.blueGrey.shade700,
+                () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen()))),
+      ]),
     );
   }
+
+  Widget _buildLargeMenuButton(BuildContext context, String label, IconData icon, Color color, VoidCallback onTap) {
+    return SizedBox(width: double.infinity, height: 85, child: ElevatedButton(onPressed: onTap, style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: color, elevation: 3, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)), side: BorderSide(color: color.withOpacity(0.3), width: 1.5)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, size: 34), const SizedBox(width: 16), Text(label, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900))])));
+  }
+
+  Widget _buildSwiperHeader() => const Padding(padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8), child: Row(children: [Icon(Icons.auto_awesome, size: 20, color: Colors.orangeAccent), SizedBox(width: 8), Text("臨床進度週期追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))]));
 }

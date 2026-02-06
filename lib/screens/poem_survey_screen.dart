@@ -1,25 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // 🚀 建議 5️⃣：Haptic 反饋
+import 'package:flutter/services.dart';
 import '../models/poem_record.dart';
 import '../main.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import '../models/scale_configs.dart';
 
 class PoemSurveyScreen extends StatefulWidget {
-  const PoemSurveyScreen({super.key});
+  final ScaleType initialType;
+  const PoemSurveyScreen({super.key, required this.initialType});
 
   @override
   State<PoemSurveyScreen> createState() => _PoemSurveyScreenState();
 }
 
 class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
-  // 📍 核心狀態
-  ScaleType _selectedScale = ScaleType.poem;
+  late ScaleType _selectedScale;
   late List<int> _answers;
-  late List<DateTime?> _answerTimestamps; // 🚀 建議 4️⃣：回答時間戳
+  late List<DateTime?> _answerTimestamps;
   bool _isSaving = false;
-  bool _imageConsent = true; // 🚀 建議 3️⃣：圖片上傳知情同意
+  bool _imageConsent = true;
 
   final PageController _pageController = PageController();
   int _currentPage = 0;
@@ -29,87 +28,81 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   @override
   void initState() {
     super.initState();
-    _initAnswers(ScaleType.poem);
+    _selectedScale = widget.initialType;
+    _initAnswers(_selectedScale);
+  }
+
+  List<Map<String, dynamic>> _getQuestions(ScaleType type) {
+    switch (type) {
+      case ScaleType.adct:
+      // 6題, 每題 0-4 分
+        return [
+          {"q": "1. 在過去一週，您會如何評價您的濕疹相關症狀？", "options": ["沒有症狀 (0分)", "輕微 (1分)", "中度 (2分)", "嚴重 (3分)", "非常嚴重 (4分)"]},
+          {"q": "2. 在過去一週，您有多少天因為濕疹而出現強烈的癢感發作？", "options": ["完全沒有 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "3. 在過去一週，您受濕疹的困擾有多大？", "options": ["完全沒有 (0分)", "有一點 (1分)", "中度 (2分)", "非常 (3分)", "極度 (4分)"]},
+          {"q": "4. 在過去一週，您有幾晚因為濕疹而難以入睡或睡不好？", "options": ["都沒有 (0分)", "1-2晚 (1分)", "3-4晚 (2分)", "5-6晚 (3分)", "每晚 (4分)"]},
+          {"q": "5. 在過去一週，您的濕疹對您日常活動影響多大？", "options": ["完全沒有 (0分)", "有一點 (1分)", "中度 (2分)", "很大 (3分)", "極度 (4分)"]},
+          {"q": "6. 在過去一週，您的濕疹對您心情或情緒影響多大？", "options": ["完全沒有 (0分)", "有一點 (1分)", "中度 (2分)", "很大 (3分)", "極度 (4分)"]},
+        ];
+      case ScaleType.poem:
+      // 7題, 0-4 分
+        return [
+          {"q": "1. 過去一週內，皮膚感到瘙癢的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "2. 過去一週內，因癢而睡眠受干擾的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "3. 過去一週內，皮膚流血的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "4. 過去一週內，皮膚流膿/滲液的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "5. 過去一週內，皮膚裂開的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "6. 過去一週內，皮膚脫屑的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "7. 過去一週內，皮膚感到乾燥的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+        ];
+      case ScaleType.uas7:
+      // 2題, 0-3 分
+        return [
+          {"q": "膨疹數量 (過去 24 小時內)", "options": ["無 (0分)", "輕微 (<20個) (1分)", "中度 (20-50個) (2分)", "嚴重 (>50個) (3分)"]},
+          {"q": "搔癢程度 (過去 24 小時內)", "options": ["無 (0分)", "輕微 (1分)", "中度 (2分)", "強烈 (3分)"]},
+        ];
+      case ScaleType.scorad:
+      //
+        return [
+          {"q": "1. 皮膚發紅程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
+          {"q": "2. 水腫或丘疹程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
+          {"q": "3. 皮膚滲出或結痂程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
+          {"q": "4. 表皮抓痕程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
+          {"q": "5. 皮膚苔蘚化程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
+          {"q": "6. 皮膚乾燥程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
+          {"q": "7. 過去 24 小時瘙癢程度 (VAS 0-10)", "type": "slider"},
+          {"q": "8. 過去一晚失眠程度 (VAS 0-10)", "type": "slider"},
+        ];
+      default: return [];
+    }
   }
 
   void _initAnswers(ScaleType type) {
-    final count = ScaleConfig.allScales[type]!.questions.length;
-    _answers = List.filled(count, -1);
-    _answerTimestamps = List.filled(count, null); // 記錄每題作答時間
-  }
-
-  // 🚀 建議 1️⃣：中途離開確認 (防止資料遺失)
-  Future<bool> _onWillPop() async {
-    final hasAnswers = _answers.any((a) => a != -1);
-    if (!hasAnswers) return true;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("中途離開？"),
-        content: const Text("目前填寫的進度尚未儲存，確定要離開嗎？"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("繼續填寫")),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("離開", style: TextStyle(color: Colors.red))
-          ),
-        ],
-      ),
-    );
-    return confirm ?? false;
-  }
-
-  void _onOptionSelected(int index, int score) {
-    HapticFeedback.lightImpact(); // 🚀 建議 5️⃣：觸感反饋
+    final count = _getQuestions(type).length;
     setState(() {
-      _answers[index] = score;
-      _answerTimestamps[index] = DateTime.now(); // 🚀 建議 4️⃣：紀錄作答時間
+      _answers = List.filled(count, -1);
+      _answerTimestamps = List.filled(count, null);
     });
+  }
 
-    final config = ScaleConfig.allScales[_selectedScale]!;
-    if (index < config.questions.length - 1) {
-      Future.delayed(const Duration(milliseconds: 350), () {
-        _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
-      });
+  void _onOptionSelected(int qIndex, int score) {
+    HapticFeedback.mediumImpact();
+    setState(() { _answers[qIndex] = score; _answerTimestamps[qIndex] = DateTime.now(); });
+    if (qIndex < _getQuestions(_selectedScale).length - 1) {
+      Future.delayed(const Duration(milliseconds: 300), () => _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut));
     }
-    // 🚀 建議 2️⃣：此處可呼叫 isarService.saveDraft(_answers) 實作自動儲存
   }
 
   void _saveAndFinish() async {
     if (_isSaving) return;
-    final currentConfig = ScaleConfig.allScales[_selectedScale]!;
-
-    // 漏填檢查
-    final missing = <int>[];
-    for (int i = 0; i < _answers.length; i++) {
-      if (_answers[i] == -1) missing.add(i + 1);
-    }
-
-    if (missing.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("漏填項目：${missing.join(', ')}")));
-      _pageController.animateToPage(missing.first - 1, duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
-      return;
-    }
-
     setState(() => _isSaving = true);
     try {
-      final totalScore = _answers.reduce((a, b) => a + b);
-      final newRecord = PoemRecord()
-        ..date = DateTime.now()
-        ..scaleType = _selectedScale
-        ..type = RecordType.weekly
-        ..score = totalScore
-        ..answers = _answers
-      // 🚀 關鍵調整：
-        ..imagePath = _image?.path  // 無論有無授權，照片路徑都存進資料庫供個人查看
-        ..imageConsent = _imageConsent; // 紀錄使用者是否同意將此照片放進「報告」
-
-      await isarService.saveRecord(newRecord);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("數據已安全存入臨床紀錄")));
-      Navigator.pop(context);
+      final total = _answers.map((e) => e == -1 ? 0 : e).reduce((a, b) => a + b);
+      final record = PoemRecord()
+        ..date = DateTime.now()..scaleType = _selectedScale..type = RecordType.weekly
+        ..score = total..answers = _answers..imagePath = _image?.path..imageConsent = _imageConsent;
+      await isarService.saveRecord(record);
+      if (mounted) Navigator.pop(context);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("儲存失敗：$e")));
     } finally {
@@ -119,289 +112,110 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentConfig = ScaleConfig.allScales[_selectedScale]!;
+    final questions = _getQuestions(_selectedScale);
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
-    return PopScope( // 🚀 建議 1️⃣：取代 WillPopScope 控制返回邏輯
-      canPop: !_answers.any((a) => a != -1),
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        final bool shouldPop = await _onWillPop();
-        if (shouldPop && context.mounted) Navigator.pop(context);
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(currentConfig.title),
-          backgroundColor: isDarkMode ? null : Colors.blue.shade50,
-          bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(6),
-            child: LinearProgressIndicator(
-              value: (_currentPage + 1) / currentConfig.questions.length,
-              backgroundColor: isDarkMode ? Colors.grey.shade800 : Colors.grey.shade200,
-              minHeight: 6,
+    return Scaffold(
+      appBar: AppBar(title: Text(_getScaleTitle(_selectedScale)), centerTitle: true, backgroundColor: isDarkMode ? null : Colors.blue.shade50),
+      body: Column(
+        children: [
+          LinearProgressIndicator(value: (_currentPage + 1) / questions.length, minHeight: 6),
+          Expanded(
+            child: PageView.builder(
+              controller: _pageController, physics: const NeverScrollableScrollPhysics(),
+              onPageChanged: (idx) => setState(() => _currentPage = idx),
+              itemCount: questions.length,
+              itemBuilder: (ctx, idx) => _buildQuestionCard(questions, idx, isDarkMode),
             ),
           ),
-        ),
-        body: Column(
-          children: [
-            _buildScaleSelector(),
-            Expanded(
-              child: PageView.builder(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
-                onPageChanged: (index) => setState(() => _currentPage = index),
-                itemCount: currentConfig.questions.length,
-                itemBuilder: (context, index) => _buildDynamicQuestionCard(currentConfig, index),
-              ),
-            ),
-          ],
-        ),
-        bottomNavigationBar: _buildBottomBar(currentConfig.questions.length),
+        ],
       ),
+      bottomNavigationBar: _buildBottomBar(questions.length),
     );
   }
 
-  Widget _buildDynamicQuestionCard(ScaleConfig config, int index) {
-    final question = config.questions[index];
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    bool isButtonType = question.options != null;
-
+  Widget _buildQuestionCard(List<Map<String, dynamic>> questions, int idx, bool isDarkMode) {
+    final q = questions[idx];
+    final bool isSlider = q['type'] == 'slider';
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 🚀 建議 6️⃣：進度百分比文字
-          Text(
-            "${config.title} 進度 ${index + 1} / ${config.questions.length} (${((index + 1) / config.questions.length * 100).toInt()}%)",
-            style: TextStyle(color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600, fontSize: 13),
-          ),
+          Text("題目 ${idx + 1} / ${questions.length}", style: const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 16),
-          Text(question.label,
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, height: 1.4, color: isDarkMode ? Colors.white : Colors.black87)),
+          Text(q['q'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, height: 1.4)),
           const SizedBox(height: 32),
-
-          if (isButtonType)
-            ...List.generate(question.options!.length, (optIndex) {
-              return Semantics( // 🚀 建議 7️⃣：語意化標籤
-                label: "量表選項 ${optIndex + 1}：${question.options![optIndex]}",
-                child: _buildOptionCard(context, question.options![optIndex], index, optIndex, _answers[index] == optIndex),
-              );
-            })
-          else
-            _buildSliderSection(config, index),
-
-          // 🚀 建議 3️⃣：知情同意下的照片上傳 (僅限最後一題)
-          if (index == config.questions.length - 1) _buildPhotoSection(isDarkMode),
+          if (isSlider) _buildSliderSection(idx)
+          else ...List.generate(q['options'].length, (oIdx) => _buildElderlyOptionCard(q['options'][oIdx], idx, oIdx, _answers[idx] == oIdx, isDarkMode)),
+          if (idx == questions.length - 1) _buildPhotoSection(isDarkMode),
         ],
       ),
     );
   }
 
-  // 🚀 修正：滑桿區塊加入時間戳紀錄與觸感反饋
-  Widget _buildSliderSection(ScaleConfig config, int index) {
-    return Column(children: [
-      Text(
-          "${_answers[index] == -1 ? 0 : _answers[index]} 分",
-          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.blue)
-      ),
-      Slider(
-        value: (_answers[index] == -1 ? 0 : _answers[index]).toDouble(),
-        min: 0,
-        max: 10,
-        divisions: 10,
-        // 1. onChanged 僅負責更新數值與觸感，不跳頁
-        onChanged: (v) {
-          HapticFeedback.selectionClick();
-          setState(() {
-            _answers[index] = v.toInt();
-            _answerTimestamps[index] = DateTime.now();
-          });
-        },
-        // 2. 🚀 新增：當手指放開時，延遲一下下就自動跳下一頁
-        onChangeEnd: (v) {
-          final currentConfig = ScaleConfig.allScales[_selectedScale]!;
-          if (index < currentConfig.questions.length - 1) {
-            Future.delayed(const Duration(milliseconds: 400), () {
-              _pageController.nextPage(
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeInOut
-              );
-            });
-          }
-        },
-      ),
-      const Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text("無 (0)", style: TextStyle(fontSize: 12, color: Colors.grey)),
-          Text("極其嚴重 (10)", style: TextStyle(fontSize: 12, color: Colors.grey))
-        ],
-      ),
-    ]);
-  }
-
-
-
-  // 2. 更新後的照片區域 UI
-  Widget _buildPhotoSection(bool isDarkMode) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Divider(height: 60),
-      const Text("📷 可選：錄入患部照片", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-      const SizedBox(height: 8),
-
-      // 🚀 授權勾選框：預設打勾，僅控制「報告顯示」權限
-      CheckboxListTile(
-        value: _imageConsent,
-        onChanged: (v) => setState(() => _imageConsent = v!),
-        title: const Text(
-            "同意將此照片用於醫師臨床評估（未勾選則照片僅供個人紀錄，不顯示於報告中）。",
-            style: TextStyle(fontSize: 12, color: Colors.grey)
-        ),
-        contentPadding: EdgeInsets.zero,
-        controlAffinity: ListTileControlAffinity.leading,
-      ),
-
-      const SizedBox(height: 16),
-
-      // 🚀 預覽圖：只要有拍照就顯示
-      if (_image != null)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(_image!, height: 180, width: double.infinity, fit: BoxFit.cover)
-          ),
-        ),
-
-      // 🚀 相機按鈕：始終開啟，不受 Checkbox 限制
-      OutlinedButton.icon(
-        onPressed: _showPickImageOptions,
-        icon: const Icon(Icons.camera_alt),
-        label: Text(_image == null ? "開啟相機拍照" : "更換照片"),
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(double.infinity, 50),
-          side: BorderSide(color: isDarkMode ? Colors.blue.shade300 : Colors.blue),
-        ),
-      ),
-    ]);
-  }
-
-  // 🚀 補回：量表切換邏輯 (含防誤觸與重置)
-  Future<void> _onScaleChanged(ScaleType? newScale) async {
-    if (newScale == null || newScale == _selectedScale) return;
-    final hasAnswers = _answers.any((a) => a != -1);
-
-    if (hasAnswers) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text("切換量表？"),
-          content: const Text("目前填寫的進度將被清空，確定要切換嗎？"),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("確定重置", style: TextStyle(color: Colors.red))),
-          ],
-        ),
-      );
-      if (confirm != true) return;
-    }
-
-    setState(() {
-      _selectedScale = newScale;
-      _currentPage = 0;
-      _initAnswers(newScale);
-      _pageController.jumpToPage(0);
-    });
-  }
-
-  // --- UI 元件 (下拉選單, OptionCard, BottomBar 等保持優化) ---
-  Widget _buildScaleSelector() {
+  Widget _buildElderlyOptionCard(String label, int qIdx, int val, bool isSelected, bool isDarkMode) {
     return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: DropdownButtonFormField<ScaleType>(
-        value: _selectedScale,
-        decoration: InputDecoration(
-          labelText: "目前執行的量表任務",
-          filled: true,
-          fillColor: Colors.blue.shade50.withOpacity(0.5),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-        ),
-        items: const [
-          DropdownMenuItem(value: ScaleType.poem, child: Text("POEM 每週評估 (AD)")),
-          DropdownMenuItem(value: ScaleType.uas7, child: Text("UAS7 每日紀錄 (蕁麻疹)")),
-          DropdownMenuItem(value: ScaleType.scorad, child: Text("SCORAD 症狀自評 (AD)")),
-        ],
-        onChanged: _onScaleChanged,
-      ),
-    );
-  }
-
-  Widget _buildBottomBar(int totalQuestions) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            TextButton(
-              onPressed: _currentPage == 0 ? null : () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
-              child: const Text("上一題"),
-            ),
-            if (_currentPage == totalQuestions - 1)
-              ElevatedButton(
-                onPressed: _isSaving ? null : _saveAndFinish, // 🚀 Guard 鎖定按鈕
-                child: _isSaving
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text("提交結果並存入歷史"),
-              )
-          ],
+      padding: const EdgeInsets.only(bottom: 14),
+      child: InkWell(
+        onTap: () => _onOptionSelected(qIdx, val),
+        borderRadius: BorderRadius.circular(16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200), padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 20),
+          decoration: BoxDecoration(color: isSelected ? Colors.blue.withOpacity(0.1) : (isDarkMode ? Colors.grey.shade900 : Colors.white), borderRadius: BorderRadius.circular(16), border: Border.all(color: isSelected ? Colors.blue : Colors.grey.shade300, width: isSelected ? 3 : 1.5)),
+          child: Row(children: [Expanded(child: Text(label, style: TextStyle(fontSize: 20, fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold))), Icon(isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded, color: isSelected ? Colors.blue : Colors.grey.shade400, size: 28)]),
         ),
       ),
     );
   }
 
-  // ... (原本的 _buildOptionCard, _showPickImageOptions, _pickImage) ...
-  Widget _buildOptionCard(BuildContext context, String label, int questionIndex, int value, bool isSelected) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final primaryColor = Theme.of(context).colorScheme.primary;
-    return GestureDetector(
-      onTap: () {
-        setState(() => _answers[questionIndex] = value);
-        if (questionIndex < ScaleConfig.allScales[_selectedScale]!.questions.length - 1) {
-          Future.delayed(const Duration(milliseconds: 300), () => _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut));
-        }
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: double.infinity,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: isSelected ? primaryColor.withOpacity(isDarkMode ? 0.25 : 0.15) : (isDarkMode ? const Color(0xFF2C2C2C) : Colors.grey.shade50),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: isSelected ? primaryColor : (isDarkMode ? Colors.grey.shade800 : Colors.grey.shade300), width: isSelected ? 3.0 : 1.5),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(child: Text(label, style: TextStyle(fontSize: 18, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isDarkMode ? Colors.white : (isSelected ? primaryColor : Colors.black87)))),
-            Icon(isSelected ? Icons.check_circle : Icons.radio_button_unchecked, color: isSelected ? primaryColor : (isDarkMode ? Colors.grey.shade700 : Colors.grey.shade400)),
-          ],
-        ),
-      ),
-    );
+  Widget _buildSliderSection(int index) {
+    return Column(children: [
+      Text("${_answers[index] == -1 ? 0 : _answers[index]} 分", style: const TextStyle(fontSize: 42, fontWeight: FontWeight.bold, color: Colors.blue)),
+      Slider(value: (_answers[index] == -1 ? 0 : _answers[index]).toDouble(), min: 0, max: 10, divisions: 10, onChanged: (v) => setState(() { _answers[index] = v.toInt(); })),
+      const Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("無感 (0)", style: TextStyle(fontWeight: FontWeight.bold)), Text("極度嚴重 (10)", style: TextStyle(fontWeight: FontWeight.bold))]),
+    ]);
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final XFile? photo = await _picker.pickImage(source: source, imageQuality: 50);
-    if (photo != null) setState(() => _image = File(photo.path));
+  Widget _buildPhotoSection(bool isDarkMode) {
+    return Column(children: [
+      const Divider(height: 60, thickness: 1.5),
+      const Text("📷 錄入患部照片 (選填)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      CheckboxListTile(value: _imageConsent, activeColor: Colors.blue, onChanged: (v) => setState(() => _imageConsent = v!), title: const Text("同意照片用於醫師臨床評估", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)), contentPadding: EdgeInsets.zero),
+      if (_image != null) Padding(padding: const EdgeInsets.symmetric(vertical: 16), child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(_image!, height: 200, width: double.infinity, fit: BoxFit.cover))),
+      SizedBox(width: double.infinity, height: 60, child: OutlinedButton.icon(onPressed: _showPickImageOptions, icon: const Icon(Icons.camera_alt_rounded), label: Text(_image == null ? "開啟相機拍照" : "更換照片", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), side: const BorderSide(color: Colors.blue, width: 2)))),
+    ]);
   }
 
   void _showPickImageOptions() {
-    showModalBottomSheet(context: context, builder: (context) => SafeArea(child: Wrap(children: [
-      ListTile(leading: const Icon(Icons.camera_alt), title: const Text('開啟相機拍照'), onTap: () { Navigator.pop(context); _pickImage(ImageSource.camera); }),
-      ListTile(leading: const Icon(Icons.photo_library), title: const Text('從相簿選擇照片'), onTap: () { Navigator.pop(context); _pickImage(ImageSource.gallery); }),
+    showModalBottomSheet(context: context, builder: (ctx) => SafeArea(child: Wrap(children: [
+      ListTile(leading: const Icon(Icons.camera), title: const Text('現場拍照'), onTap: () { Navigator.pop(ctx); _pickImage(ImageSource.camera); }),
+      ListTile(leading: const Icon(Icons.photo), title: const Text('相簿選擇'), onTap: () { Navigator.pop(ctx); _pickImage(ImageSource.gallery); }),
     ])));
+  }
+
+  Future<void> _pickImage(ImageSource src) async {
+    final XFile? p = await _picker.pickImage(source: src, imageQuality: 40);
+    if (p != null) setState(() => _image = File(p.path));
+  }
+
+  Widget _buildBottomBar(int total) {
+    return SafeArea(child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        TextButton(onPressed: _currentPage == 0 ? null : () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut), child: const Text("上一題", style: TextStyle(fontSize: 18))),
+        if (_currentPage == total - 1) ElevatedButton(onPressed: _isSaving ? null : _saveAndFinish, child: _isSaving ? const CircularProgressIndicator() : const Text("確認提交", style: TextStyle(fontSize: 18))),
+      ]),
+    ));
+  }
+
+  String _getScaleTitle(ScaleType type) {
+    switch (type) {
+      case ScaleType.adct: return "ADCT 控制評估";
+      case ScaleType.poem: return "POEM 檢測";
+      case ScaleType.uas7: return "UAS7 紀錄";
+      case ScaleType.scorad: return "SCORAD 自評";
+      default: return "量表檢測";
+    }
   }
 }

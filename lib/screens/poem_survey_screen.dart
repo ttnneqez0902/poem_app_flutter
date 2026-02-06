@@ -32,10 +32,10 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     _initAnswers(_selectedScale);
   }
 
+  // --- 臨床題目配置保持不變 ---
   List<Map<String, dynamic>> _getQuestions(ScaleType type) {
     switch (type) {
       case ScaleType.adct:
-      // 6題, 每題 0-4 分
         return [
           {"q": "1. 在過去一週，您會如何評價您的濕疹相關症狀？", "options": ["沒有症狀 (0分)", "輕微 (1分)", "中度 (2分)", "嚴重 (3分)", "非常嚴重 (4分)"]},
           {"q": "2. 在過去一週，您有多少天因為濕疹而出現強烈的癢感發作？", "options": ["完全沒有 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
@@ -45,7 +45,6 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
           {"q": "6. 在過去一週，您的濕疹對您心情或情緒影響多大？", "options": ["完全沒有 (0分)", "有一點 (1分)", "中度 (2分)", "很大 (3分)", "極度 (4分)"]},
         ];
       case ScaleType.poem:
-      // 7題, 0-4 分
         return [
           {"q": "1. 過去一週內，皮膚感到瘙癢的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
           {"q": "2. 過去一週內，因癢而睡眠受干擾的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
@@ -56,13 +55,11 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
           {"q": "7. 過去一週內，皮膚感到乾燥的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
         ];
       case ScaleType.uas7:
-      // 2題, 0-3 分
         return [
           {"q": "膨疹數量 (過去 24 小時內)", "options": ["無 (0分)", "輕微 (<20個) (1分)", "中度 (20-50個) (2分)", "嚴重 (>50個) (3分)"]},
           {"q": "搔癢程度 (過去 24 小時內)", "options": ["無 (0分)", "輕微 (1分)", "中度 (2分)", "強烈 (3分)"]},
         ];
       case ScaleType.scorad:
-      //
         return [
           {"q": "1. 皮膚發紅程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
           {"q": "2. 水腫或丘疹程度", "options": ["無 (0分)", "輕度 (1分)", "中度 (2分)", "嚴重 (3分)"]},
@@ -79,10 +76,7 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
 
   void _initAnswers(ScaleType type) {
     final count = _getQuestions(type).length;
-    setState(() {
-      _answers = List.filled(count, -1);
-      _answerTimestamps = List.filled(count, null);
-    });
+    setState(() { _answers = List.filled(count, -1); _answerTimestamps = List.filled(count, null); });
   }
 
   void _onOptionSelected(int qIndex, int score) {
@@ -93,14 +87,21 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     }
   }
 
+  // 🚀 關鍵 Bug 修復點
+  // 🚀 存檔邏輯同步修正
   void _saveAndFinish() async {
     if (_isSaving) return;
     setState(() => _isSaving = true);
     try {
-      final total = _answers.map((e) => e == -1 ? 0 : e).reduce((a, b) => a + b);
+      final total = _answers.where((e) => e != -1).fold(0, (a, b) => a + b);
       final record = PoemRecord()
-        ..date = DateTime.now()..scaleType = _selectedScale..type = RecordType.weekly
-        ..score = total..answers = _answers..imagePath = _image?.path..imageConsent = _imageConsent;
+        ..date = DateTime.now()
+        ..scaleType = _selectedScale // 🚀 確保存入正確類型
+        ..score = total
+        ..answers = _answers
+        ..imagePath = _image?.path
+        ..imageConsent = _imageConsent;
+
       await isarService.saveRecord(record);
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -134,6 +135,7 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     );
   }
 
+  // --- UI 元件 (QuestionCard, OptionCard, Slider 等保持原本優化內容) ---
   Widget _buildQuestionCard(List<Map<String, dynamic>> questions, int idx, bool isDarkMode) {
     final q = questions[idx];
     final bool isSlider = q['type'] == 'slider';
@@ -200,13 +202,46 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   }
 
   Widget _buildBottomBar(int total) {
-    return SafeArea(child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        TextButton(onPressed: _currentPage == 0 ? null : () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut), child: const Text("上一題", style: TextStyle(fontSize: 18))),
-        if (_currentPage == total - 1) ElevatedButton(onPressed: _isSaving ? null : _saveAndFinish, child: _isSaving ? const CircularProgressIndicator() : const Text("確認提交", style: TextStyle(fontSize: 18))),
-      ]),
-    ));
+    final isLastPage = _currentPage == total - 1;
+    final questions = _getQuestions(_selectedScale);
+    final isSlider = questions[_currentPage]['type'] == 'slider';
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // 左側：回上一題
+            TextButton.icon(
+              onPressed: _currentPage == 0 ? null : () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
+              icon: const Icon(Icons.arrow_back_ios, size: 18),
+              label: const Text("上一題", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ),
+
+            // 🚀 右側：下一題或確認提交 (長輩友善大按鈕)
+            SizedBox(
+              width: 150, height: 65,
+              child: ElevatedButton(
+                onPressed: _isSaving ? null : () {
+                  if (isLastPage) {
+                    _saveAndFinish();
+                  } else {
+                    _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isLastPage ? Colors.green.shade700 : Colors.blue.shade700,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+                child: Text(isLastPage ? "確認提交" : "下一題 ➜", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _getScaleTitle(ScaleType type) {

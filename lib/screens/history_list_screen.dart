@@ -46,7 +46,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                // 🚀 核心修正：安全處理 null，防止 image_574622 報錯
+                // 🚀 核心修正：安全處理 null，防止報錯
                 final allRecords = snapshot.data ?? [];
 
                 final filteredRecords = allRecords.where((r) {
@@ -272,7 +272,8 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   Widget _buildActionButtons(PoemRecord record) {
     return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
       TextButton.icon(
-        onPressed: () => ExportService.generatePoemReport([record], null),
+        // 🚀 核心修正：調用最新的通用導出方法，並傳入 record.scaleType
+        onPressed: () => ExportService.generateClinicalReport([record], null, record.scaleType),
         icon: const Icon(Icons.picture_as_pdf),
         label: const Text("導出 PDF 報告", style: TextStyle(fontWeight: FontWeight.bold)),
       ),

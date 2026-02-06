@@ -230,11 +230,13 @@ const _PoemRecordscaleTypeEnumValueMap = {
   'poem': 0,
   'uas7': 1,
   'scorad': 2,
+  'adct': 3,
 };
 const _PoemRecordscaleTypeValueEnumMap = {
   0: ScaleType.poem,
   1: ScaleType.uas7,
   2: ScaleType.scorad,
+  3: ScaleType.adct,
 };
 const _PoemRecordtypeEnumValueMap = {
   'daily': 0,

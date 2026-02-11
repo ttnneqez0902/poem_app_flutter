@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../models/poem_record.dart';
 import '../main.dart';
 import '../services/export_service.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
+import 'poem_survey_screen.dart'; // 🚀 加入這行匯入
 
 // 🚀 1. 定義修正後的篩選模式：移除 daily，加入 adct
 enum HistoryViewFilter { all, adct, poem, uas7, scorad }
@@ -18,11 +20,52 @@ class HistoryListScreen extends StatefulWidget {
 class _HistoryListScreenState extends State<HistoryListScreen> {
   // 預設選擇「全部紀錄」
   HistoryViewFilter _selectedFilter = HistoryViewFilter.all;
+  Map<ScaleType, bool> _enabledScales = {};
 
   void _refresh() => setState(() {});
 
   @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    Map<ScaleType, bool> tempSettings = {};
+    for (var type in ScaleType.values) {
+      tempSettings[type] = prefs.getBool('enable_${type.name}') ?? true;
+    }
+
+    setState(() {
+      _enabledScales = tempSettings;
+      // 🚀 防呆：如果目前選取的篩選標籤對應的量表被關閉了，自動跳回「全部」
+      if (_selectedFilter != HistoryViewFilter.all) {
+        ScaleType? currentType = _getScaleTypeFromFilter(_selectedFilter);
+        if (currentType != null && !(_enabledScales[currentType] ?? true)) {
+          _selectedFilter = HistoryViewFilter.all;
+        }
+      }
+    });
+  }
+
+  // 輔助方法：將 Filter 轉回 ScaleType 以便檢查開關
+  ScaleType? _getScaleTypeFromFilter(HistoryViewFilter filter) {
+    switch (filter) {
+      case HistoryViewFilter.adct: return ScaleType.adct;
+      case HistoryViewFilter.poem: return ScaleType.poem;
+      case HistoryViewFilter.uas7: return ScaleType.uas7;
+      case HistoryViewFilter.scorad: return ScaleType.scorad;
+      default: return null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 🚀 如果設定尚未讀取完成，顯示載入轉圈，避免標籤列閃爍
+    if (_enabledScales.isEmpty) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
@@ -52,18 +95,16 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                 final filteredRecords = allRecords.where((r) {
                   // 排除掉 RecordType.daily (醫師不看的數據)
                   if (r.type == RecordType.daily) return false;
+// 🚀 新增：檢查該紀錄所屬的量表目前是否被啟用
+                  bool isScaleEnabled = _enabledScales[r.scaleType] ?? true;
+                  if (!isScaleEnabled) return false; // 如果該量表被關閉，歷史清單也不顯示它
 
                   switch (_selectedFilter) {
-                    case HistoryViewFilter.all:
-                      return true;
-                    case HistoryViewFilter.adct:
-                      return r.scaleType == ScaleType.adct;
-                    case HistoryViewFilter.poem:
-                      return r.scaleType == ScaleType.poem;
-                    case HistoryViewFilter.uas7:
-                      return r.scaleType == ScaleType.uas7;
-                    case HistoryViewFilter.scorad:
-                      return r.scaleType == ScaleType.scorad;
+                    case HistoryViewFilter.all: return true;
+                    case HistoryViewFilter.adct: return r.scaleType == ScaleType.adct;
+                    case HistoryViewFilter.poem: return r.scaleType == ScaleType.poem;
+                    case HistoryViewFilter.uas7: return r.scaleType == ScaleType.uas7;
+                    case HistoryViewFilter.scorad: return r.scaleType == ScaleType.scorad;
                   }
                 }).toList();
 
@@ -97,14 +138,22 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         child: Row(
           children: [
             _buildSingleChip("全部", HistoryViewFilter.all),
-            const SizedBox(width: 8),
-            _buildSingleChip("ADCT 控制", HistoryViewFilter.adct),
-            const SizedBox(width: 8),
-            _buildSingleChip("POEM 檢測", HistoryViewFilter.poem),
-            const SizedBox(width: 8),
-            _buildSingleChip("UAS7 活性", HistoryViewFilter.uas7),
-            const SizedBox(width: 8),
-            _buildSingleChip("SCORAD 自評", HistoryViewFilter.scorad),
+            if (_enabledScales[ScaleType.adct] ?? true) ...[
+              const SizedBox(width: 8),
+              _buildSingleChip("ADCT 異膚", HistoryViewFilter.adct),
+            ],
+            if (_enabledScales[ScaleType.poem] ?? true) ...[
+              const SizedBox(width: 8),
+              _buildSingleChip("POEM 濕疹", HistoryViewFilter.poem),
+            ],
+            if (_enabledScales[ScaleType.uas7] ?? true) ...[
+              const SizedBox(width: 8),
+              _buildSingleChip("UAS7 蕁麻疹", HistoryViewFilter.uas7),
+            ],
+            if (_enabledScales[ScaleType.scorad] ?? true) ...[
+              const SizedBox(width: 8),
+              _buildSingleChip("SCORAD 異膚", HistoryViewFilter.scorad),
+            ],
           ],
         ),
       ),
@@ -271,11 +320,35 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
   Widget _buildActionButtons(PoemRecord record) {
     return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+      // 🚀 修改按鈕
       TextButton.icon(
-        // 🚀 核心修正：調用最新的通用導出方法，並傳入 record.scaleType
+        onPressed: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PoemSurveyScreen(
+                initialType: record.scaleType,
+                oldRecord: record, // 🚀 傳入舊紀錄進行編輯模式
+              ),
+            ),
+          );
+
+          // 🚀 修改完畢回傳結果後，強制觸發頁面刷新
+          if (result != null) {
+            _refresh();
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("紀錄已成功更新"), backgroundColor: Colors.green)
+            );
+          }
+        },
+        icon: const Icon(Icons.edit_outlined, color: Colors.blue),
+        label: const Text("修改", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+      ),
+      const SizedBox(width: 8),
+      TextButton.icon(
         onPressed: () => ExportService.generateClinicalReport([record], null, record.scaleType),
         icon: const Icon(Icons.picture_as_pdf),
-        label: const Text("導出 PDF 報告", style: TextStyle(fontWeight: FontWeight.bold)),
+        label: const Text("PDF", style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       TextButton.icon(
         onPressed: () => _confirmDelete(context, record),

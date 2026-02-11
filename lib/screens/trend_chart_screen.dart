@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 import '../models/poem_record.dart';
 import '../services/export_service.dart';
 import '../main.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
+
 
 class TrendChartScreen extends StatefulWidget {
   const TrendChartScreen({super.key});
@@ -22,6 +24,32 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   int _selectedDays = 7;
   DateTimeRange? _customRange;
   final int _flareThreshold = 8;
+  Map<ScaleType, bool> _enabledScales = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEnabledScales();
+  }
+
+  Future<void> _loadEnabledScales() async {
+    final prefs = await SharedPreferences.getInstance();
+    Map<ScaleType, bool> tempSettings = {};
+    for (var type in ScaleType.values) {
+      // 預設為 true，與首頁邏輯一致
+      tempSettings[type] = prefs.getBool('enable_${type.name}') ?? true;
+    }
+
+    setState(() {
+      _enabledScales = tempSettings;
+      // 🚀 安全檢查：如果預設選擇的 ADCT 被關閉了，自動跳到第一個開啟的量表
+      if (!(_enabledScales[_selectedScale] ?? true)) {
+        _selectedScale = _enabledScales.entries
+            .firstWhere((e) => e.value, orElse: () => _enabledScales.entries.first)
+            .key;
+      }
+    });
+  }
 
   // --- 📉 數據篩選邏輯 ---
   List<PoemRecord> _getThinnedRecords(List<PoemRecord> all) {
@@ -111,6 +139,11 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   // --- 🎨 UI 建構 ---
   @override
   Widget build(BuildContext context) {
+    // 如果設定還沒讀取完，顯示載入中
+    if (_enabledScales.isEmpty) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return FutureBuilder<List<PoemRecord>>(
       future: isarService.getAllRecords(),
       builder: (context, snapshot) {
@@ -167,6 +200,10 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   }
 
   Widget _buildScaleSelector() {
+    // 🚀 只過濾出被開啟的選項
+    final List<ScaleType> availableScales = ScaleType.values
+        .where((type) => _enabledScales[type] ?? true)
+        .toList();
     return Container(
       padding: const EdgeInsets.all(16),
       color: Colors.blue.shade50,
@@ -179,15 +216,27 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
             fillColor: Colors.white,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)
         ),
-        items: const [
-          DropdownMenuItem(value: ScaleType.adct, child: Text("ADCT 控制評估 (每週)")),
-          DropdownMenuItem(value: ScaleType.poem, child: Text("POEM 濕疹檢測 (每週)")),
-          DropdownMenuItem(value: ScaleType.uas7, child: Text("UAS7 活性紀錄 (每日)")),
-          DropdownMenuItem(value: ScaleType.scorad, child: Text("SCORAD 綜合評分 (每週)")),
-        ],
+        // 🚀 動態生成選單內容
+        items: availableScales.map((type) {
+          return DropdownMenuItem(
+            value: type,
+            child: Text(_getScaleDisplayName(type)),
+          );
+        }).toList(),
         onChanged: (val) => setState(() => _selectedScale = val!),
       ),
     );
+  }
+
+// 輔助方法：獲取更友善的名稱
+  String _getScaleDisplayName(ScaleType type) {
+    switch (type) {
+      case ScaleType.adct: return "ADCT 控制評估 (每週)";
+      case ScaleType.poem: return "POEM 濕疹檢測 (每週)";
+      case ScaleType.uas7: return "UAS7 活性紀錄 (每日)";
+      case ScaleType.scorad: return "SCORAD 綜合評分 (每週)";
+      default: return type.toString();
+    }
   }
 
   Widget _buildLargeExportButton(List<PoemRecord> filtered) {

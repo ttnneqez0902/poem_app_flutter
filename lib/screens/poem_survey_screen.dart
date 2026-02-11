@@ -4,10 +4,19 @@ import '../models/poem_record.dart';
 import '../main.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'package:intl/intl.dart'; // 🚀 補上這行
 
 class PoemSurveyScreen extends StatefulWidget {
   final ScaleType initialType;
-  const PoemSurveyScreen({super.key, required this.initialType});
+  final DateTime? targetDate; // 🚀 新增：允許傳入指定補填日期
+  final PoemRecord? oldRecord; // 🚀 新增：接收舊紀錄
+
+  const PoemSurveyScreen({
+    super.key,
+    required this.initialType,
+    this.targetDate, // 🚀 補填逻辑關鍵
+    this.oldRecord, // 🚀
+  });
 
   @override
   State<PoemSurveyScreen> createState() => _PoemSurveyScreenState();
@@ -17,6 +26,8 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   late ScaleType _selectedScale;
   late List<int> _answers;
   late List<DateTime?> _answerTimestamps;
+  late DateTime _recordDate; // 🚀 儲存這筆紀錄真正的日期
+
   bool _isSaving = false;
   bool _imageConsent = true;
 
@@ -29,10 +40,24 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   void initState() {
     super.initState();
     _selectedScale = widget.initialType;
-    _initAnswers(_selectedScale);
+    if (widget.oldRecord != null) {
+      // 🚀 編輯模式：抓取舊資料
+      _recordDate = widget.oldRecord!.date!;
+      // 修正點：使用 ?? [] 確保即使 answers 為空也不會報錯
+      _answers = List<int>.from(widget.oldRecord!.answers ?? []);
+      _answerTimestamps = List.filled(_answers.length, _recordDate);
+      if (widget.oldRecord!.imagePath != null) {
+        _image = File(widget.oldRecord!.imagePath!);
+      }
+      _imageConsent = widget.oldRecord!.imageConsent ?? true;
+    } else {
+      // 新增模式
+      _recordDate = widget.targetDate ?? DateTime.now();
+      _initAnswers(_selectedScale);
+    }
   }
 
-  // --- 臨床題目配置保持不變 ---
+  // --- 題目配置保持不變 ---
   List<Map<String, dynamic>> _getQuestions(ScaleType type) {
     switch (type) {
       case ScaleType.adct:
@@ -51,7 +76,7 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
           {"q": "3. 過去一週內，皮膚流血的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
           {"q": "4. 過去一週內，皮膚流膿/滲液的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
           {"q": "5. 過去一週內，皮膚裂開的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
-          {"q": "6. 過去一週內，皮膚脫屑的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
+          {"q": "6. 過去一週內，皮膚脫屑的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (24分)", "5-6天 (3分)", "每天 (4分)"]},
           {"q": "7. 過去一週內，皮膚感到乾燥的天數？", "options": ["0天 (0分)", "1-2天 (1分)", "3-4天 (2分)", "5-6天 (3分)", "每天 (4分)"]},
         ];
       case ScaleType.uas7:
@@ -82,28 +107,32 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   void _onOptionSelected(int qIndex, int score) {
     HapticFeedback.mediumImpact();
     setState(() { _answers[qIndex] = score; _answerTimestamps[qIndex] = DateTime.now(); });
-    if (qIndex < _getQuestions(_selectedScale).length - 1) {
-      Future.delayed(const Duration(milliseconds: 300), () => _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut));
-    }
+    Future.delayed(const Duration(milliseconds: 300), () => _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut));
   }
 
-  // 🚀 關鍵 Bug 修復點
-  // 🚀 存檔邏輯同步修正
   void _saveAndFinish() async {
     if (_isSaving) return;
     setState(() => _isSaving = true);
+
     try {
       final total = _answers.where((e) => e != -1).fold(0, (a, b) => a + b);
-      final record = PoemRecord()
-        ..date = DateTime.now()
-        ..scaleType = _selectedScale // 🚀 確保存入正確類型
+      // 🚀 如果是編輯模式，沿用舊的 ID
+      final record = widget.oldRecord ?? PoemRecord();
+
+      record
+        ..date = _recordDate // 🚀 關鍵：儲存補填日期而非「現在」
+        ..scaleType = _selectedScale
         ..score = total
         ..answers = _answers
         ..imagePath = _image?.path
         ..imageConsent = _imageConsent;
 
-      await isarService.saveRecord(record);
-      if (mounted) Navigator.pop(context);
+      await isarService.saveRecord(record); // Isar 會根據 ID 自動判斷是新增或更新
+
+      if (mounted) {
+        HapticFeedback.heavyImpact();
+        Navigator.pop(context, _selectedScale);
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("儲存失敗：$e")));
     } finally {
@@ -111,31 +140,125 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     }
   }
 
+  // 🚀 新增：直接跳轉至最後一頁（照片頁）的方法
+  void _jumpToPhotoPage(int totalPages) {
+    HapticFeedback.mediumImpact();
+    _pageController.animateToPage(
+      totalPages - 1,
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeInOutExpo,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final questions = _getQuestions(_selectedScale);
+    final totalPages = questions.length + 1;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      appBar: AppBar(title: Text(_getScaleTitle(_selectedScale)), centerTitle: true, backgroundColor: isDarkMode ? null : Colors.blue.shade50),
+      appBar: AppBar(
+          title: Text(widget.oldRecord != null
+              ? "修改 ${DateFormat('MM/dd').format(_recordDate)} 紀錄" // 🚀 編輯模式標題
+              : (widget.targetDate != null
+              ? "補填 ${DateFormat('MM/dd').format(_recordDate)} 紀錄"
+              : _getScaleTitle(_selectedScale))),
+        centerTitle: true,
+        backgroundColor: isDarkMode ? null : Colors.blue.shade50,
+        // 🚀 關鍵修改：在 AppBar 加入跳轉按鈕
+        actions: [
+          if (widget.oldRecord != null && _currentPage < totalPages - 1)
+            TextButton(
+              onPressed: () => _jumpToPhotoPage(totalPages),
+              child: const Text("跳至照片", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+        ],
+      ),
       body: Column(
         children: [
-          LinearProgressIndicator(value: (_currentPage + 1) / questions.length, minHeight: 6),
+          LinearProgressIndicator(value: (_currentPage + 1) / totalPages, minHeight: 6),
           Expanded(
             child: PageView.builder(
-              controller: _pageController, physics: const NeverScrollableScrollPhysics(),
+              controller: _pageController,
+              physics: const NeverScrollableScrollPhysics(),
               onPageChanged: (idx) => setState(() => _currentPage = idx),
-              itemCount: questions.length,
-              itemBuilder: (ctx, idx) => _buildQuestionCard(questions, idx, isDarkMode),
+              itemCount: totalPages,
+              itemBuilder: (ctx, idx) {
+                if (idx < questions.length) {
+                  return _buildQuestionCard(questions, idx, isDarkMode);
+                } else {
+                  return _buildStandalonePhotoPage(isDarkMode);
+                }
+              },
             ),
           ),
         ],
       ),
-      bottomNavigationBar: _buildBottomBar(questions.length),
+      bottomNavigationBar: _buildBottomBar(totalPages),
     );
   }
 
-  // --- UI 元件 (QuestionCard, OptionCard, Slider 等保持原本優化內容) ---
+  // --- UI 元件 ---
+  Widget _buildStandalonePhotoPage(bool isDarkMode) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(height: 20),
+          const Icon(Icons.camera_enhance_rounded, size: 100, color: Colors.blueAccent),
+          const SizedBox(height: 24),
+          const Text("📷 錄入患部照片", style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          const Text("上傳照片可幫助醫師\n更精確評估病情 (選填)",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 22, color: Colors.blueGrey, height: 1.4)
+          ),
+          const SizedBox(height: 40),
+
+          if (_image != null)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.file(_image!, height: 280, width: double.infinity, fit: BoxFit.cover)
+                )
+            ),
+
+          SizedBox(
+              width: double.infinity,
+              height: 80,
+              child: OutlinedButton.icon(
+                  onPressed: _showPickImageOptions,
+                  icon: const Icon(Icons.camera_alt_rounded, size: 32),
+                  label: Text(
+                      _image == null ? "開啟相機拍照" : "更換照片",
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)
+                  ),
+                  style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      side: const BorderSide(color: Colors.blue, width: 3)
+                  )
+              )
+          ),
+
+          const SizedBox(height: 30),
+          Theme(
+            data: ThemeData(unselectedWidgetColor: Colors.blueGrey),
+            child: CheckboxListTile(
+              value: _imageConsent,
+              activeColor: Colors.blue,
+              onChanged: (v) => setState(() => _imageConsent = v!),
+              title: const Text("同意照片用於醫師臨床評估", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildQuestionCard(List<Map<String, dynamic>> questions, int idx, bool isDarkMode) {
     final q = questions[idx];
     final bool isSlider = q['type'] == 'slider';
@@ -150,7 +273,6 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
           const SizedBox(height: 32),
           if (isSlider) _buildSliderSection(idx)
           else ...List.generate(q['options'].length, (oIdx) => _buildElderlyOptionCard(q['options'][oIdx], idx, oIdx, _answers[idx] == oIdx, isDarkMode)),
-          if (idx == questions.length - 1) _buildPhotoSection(isDarkMode),
         ],
       ),
     );
@@ -172,21 +294,43 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   }
 
   Widget _buildSliderSection(int index) {
-    return Column(children: [
-      Text("${_answers[index] == -1 ? 0 : _answers[index]} 分", style: const TextStyle(fontSize: 42, fontWeight: FontWeight.bold, color: Colors.blue)),
-      Slider(value: (_answers[index] == -1 ? 0 : _answers[index]).toDouble(), min: 0, max: 10, divisions: 10, onChanged: (v) => setState(() { _answers[index] = v.toInt(); })),
-      const Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("無感 (0)", style: TextStyle(fontWeight: FontWeight.bold)), Text("極度嚴重 (10)", style: TextStyle(fontWeight: FontWeight.bold))]),
-    ]);
-  }
+    final int currentVal = _answers[index] == -1 ? 0 : _answers[index];
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final double sliderAreaHeight = screenHeight * 0.4;
 
-  Widget _buildPhotoSection(bool isDarkMode) {
-    return Column(children: [
-      const Divider(height: 60, thickness: 1.5),
-      const Text("📷 錄入患部照片 (選填)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-      CheckboxListTile(value: _imageConsent, activeColor: Colors.blue, onChanged: (v) => setState(() => _imageConsent = v!), title: const Text("同意照片用於醫師臨床評估", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)), contentPadding: EdgeInsets.zero),
-      if (_image != null) Padding(padding: const EdgeInsets.symmetric(vertical: 16), child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(_image!, height: 200, width: double.infinity, fit: BoxFit.cover))),
-      SizedBox(width: double.infinity, height: 60, child: OutlinedButton.icon(onPressed: _showPickImageOptions, icon: const Icon(Icons.camera_alt_rounded), label: Text(_image == null ? "開啟相機拍照" : "更換照片", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), side: const BorderSide(color: Colors.blue, width: 2)))),
-    ]);
+    return Center(
+      child: Container(
+        height: sliderAreaHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("極度嚴重\n(10)", textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.redAccent)),
+                Text("$currentVal 分", style: const TextStyle(fontSize: 42, fontWeight: FontWeight.bold, color: Colors.blue)),
+                const Text("無感\n(0)", textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.green)),
+              ],
+            ),
+            const SizedBox(width: 30),
+            SizedBox(
+              width: 60, height: sliderAreaHeight,
+              child: RotatedBox(
+                quarterTurns: 3,
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(trackHeight: 10, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 16), overlayShape: const RoundSliderOverlayShape(overlayRadius: 24)),
+                  child: Slider(
+                    value: currentVal.toDouble(), min: 0, max: 10, divisions: 10, activeColor: Colors.blue, inactiveColor: Colors.blue.withOpacity(0.1),
+                    onChanged: (v) => setState(() => _answers[index] = v.toInt()),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showPickImageOptions() {
@@ -203,39 +347,53 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
 
   Widget _buildBottomBar(int total) {
     final isLastPage = _currentPage == total - 1;
-    final questions = _getQuestions(_selectedScale);
-    final isSlider = questions[_currentPage]['type'] == 'slider';
+    final questionsCount = _getQuestions(_selectedScale).length;
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 左側：回上一題
             TextButton.icon(
-              onPressed: _currentPage == 0 ? null : () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
+              onPressed: (_currentPage == 0 || _isSaving)
+                  ? null
+                  : () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
               icon: const Icon(Icons.arrow_back_ios, size: 18),
               label: const Text("上一題", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             ),
 
-            // 🚀 右側：下一題或確認提交 (長輩友善大按鈕)
             SizedBox(
-              width: 150, height: 65,
+              width: 160, height: 60,
               child: ElevatedButton(
                 onPressed: _isSaving ? null : () {
                   if (isLastPage) {
                     _saveAndFinish();
                   } else {
+                    if (_currentPage < questionsCount && _answers[_currentPage] == -1) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("請選擇一個選項"), duration: Duration(seconds: 1))
+                      );
+                      return;
+                    }
                     _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
                   }
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: isLastPage ? Colors.green.shade700 : Colors.blue.shade700,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  elevation: 4,
+                  padding: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                 ),
-                child: Text(isLastPage ? "確認提交" : "下一題 ➜", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                child: Container(
+                  alignment: Alignment.center,
+                  child: _isSaving
+                      ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                      : Text(isLastPage ? "完成紀錄" : "下一題 ➜",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                ),
               ),
             ),
           ],

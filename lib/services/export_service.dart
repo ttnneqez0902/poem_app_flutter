@@ -284,10 +284,30 @@ class ExportService {
 
   static Map<String, String> _getScaleMetadata(ScaleType t) {
     switch (t) {
-      case ScaleType.adct: return {'title': 'ADCT', 'full_name': 'ADCT 控制測試報告', 'disclaimer': 'ADCT 評估週控制狀況，7分為警戒切點'};
-      case ScaleType.uas7: return {'title': 'UAS7', 'full_name': 'UAS7 活性紀錄報告', 'disclaimer': 'UAS7 評估週活性，28分以上為嚴重'};
-      case ScaleType.scorad: return {'title': 'SCORAD', 'full_name': 'SCORAD 自評報告', 'disclaimer': '呈現患者主觀感官數據'};
-      default: return {'title': 'POEM', 'full_name': 'POEM 頻率檢測報告', 'disclaimer': '評估濕疹症狀頻率，17分以上為重度'};
+      case ScaleType.adct:
+        return {
+          'title': 'ADCT',
+          'full_name': 'ADCT 每周異膚控制報告', // 🚀 對接：每周異膚控制
+          'disclaimer': 'ADCT 評估異位性皮膚炎控制狀況，7分為臨床警戒切點'
+        };
+      case ScaleType.uas7:
+        return {
+          'title': 'UAS7',
+          'full_name': 'UAS7 每日蕁麻疹量表報告', // 🚀 對接：每日蕁麻疹量表
+          'disclaimer': 'UAS7 紀錄每日蕁麻疹活性，週總分 28 分以上為嚴重活性'
+        };
+      case ScaleType.scorad:
+        return {
+          'title': 'SCORAD',
+          'full_name': 'SCORAD 每周異膚綜合報告', // 🚀 對接：每周異膚綜合
+          'disclaimer': '呈現患者異位性皮膚炎之主觀感官與臨床綜合評分'
+        };
+      default: // ScaleType.poem
+        return {
+          'title': 'POEM',
+          'full_name': 'POEM 每周濕疹檢測報告', // 🚀 對接：每周濕疹檢測
+          'disclaimer': '評估濕疹症狀出現頻率，週總分 17 分以上為重度病灶'
+        };
     }
   }
 

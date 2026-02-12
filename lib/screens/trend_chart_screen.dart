@@ -54,43 +54,79 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   // --- 📉 數據篩選邏輯 ---
   List<PoemRecord> _getThinnedRecords(List<PoemRecord> all) {
     List<PoemRecord> filtered = all.where((r) {
-      if (r.date == null || r.scaleType != _selectedScale) return false;
-      if (r.score == null) return false; // 🚀 核心修正：掃除幽靈點
-      return DateTime.now().difference(r.date!).inDays <= (_selectedDays - 1);
+      final displayDate = r.targetDate ?? r.date;
+      if (displayDate == null || r.scaleType != _selectedScale) return false;
+
+      if (_selectedDays == -1 && _customRange != null) {
+        // 🚀 補上自訂日期範圍的判定
+        return displayDate.isAfter(_customRange!.start.subtract(const Duration(seconds: 1))) &&
+            displayDate.isBefore(_customRange!.end.add(const Duration(days: 1)));
+      }
+
+      return DateTime.now().difference(displayDate).inDays <= (_selectedDays - 1);
     }).toList();
-    filtered.sort((a, b) => a.date!.compareTo(b.date!));
+
+    filtered.sort((a, b) => (a.targetDate ?? a.date!).compareTo((b.targetDate ?? b.date!)));
     return filtered;
   }
 
   // --- 📊 圖表配置邏輯 ---
+  // --- 📊 圖表配置邏輯 ---
   LineChartData _mainData(List<PoemRecord> filtered) {
     if (filtered.isEmpty) return LineChartData();
-    final startDate = filtered.first.date!;
-    final endDate = filtered.last.date!;
 
-    // 🚀 關鍵修正：計算精確天數並加入緩衝區
+    final startDate = filtered.first.targetDate ?? filtered.first.date!;
+    final endDate = filtered.last.targetDate ?? filtered.last.date!;
     final double rawDays = endDate.difference(startDate).inMinutes / 1440;
-    final double visualMinX = -0.2; // 左側微調
-    final double visualMaxX = rawDays < 0.5 ? 1.0 : rawDays + 0.5; // 右側緩衝
+
+    // 🚀 核心修正：更積極的智慧標籤間隔，解決 14/28/90 天擁擠問題
+    double bottomInterval = 1.0;
+    if (rawDays > 60) {
+      bottomInterval = 14.0; // 90天：每兩週顯示一個標籤
+    } else if (rawDays > 20) {
+      bottomInterval = 7.0;  // 28天：每週顯示一個標籤
+    } else if (rawDays >= 10) {
+      bottomInterval = 3.0;  // 14天：每三天顯示一個標籤
+    }
 
     return LineChartData(
-      minX: visualMinX,
-      maxX: visualMaxX,
+      minX: -0.2,
+      maxX: rawDays < 0.5 ? 1.0 : rawDays + 0.5,
       minY: 0,
       maxY: _getMaxYForScale(_selectedScale),
       lineBarsData: [_getLineData(filtered, startDate)],
-      gridData: FlGridData(show: true, verticalInterval: _selectedScale == ScaleType.uas7 ? 1.0 : 7.0),
+      gridData: FlGridData(
+        show: true,
+        drawVerticalLine: true,
+        verticalInterval: bottomInterval, // 網格線隨日期密度調整
+        horizontalInterval: _getIntervalForScale(_selectedScale),
+      ),
       titlesData: FlTitlesData(
         leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40, interval: _getIntervalForScale(_selectedScale))),
-        bottomTitles: AxisTitles(sideTitles: SideTitles(
-            showTitles: true,
-            interval: _selectedScale == ScaleType.uas7 ? 1.0 : (rawDays < 7 ? 1.0 : 7.0),
-            getTitlesWidget: (v, m) {
-              if (v < 0) return const SizedBox.shrink();
-              final date = startDate.add(Duration(minutes: (v * 1440).toInt()));
-              return Padding(padding: const EdgeInsets.only(top: 10), child: Text(DateFormat('MM/dd').format(date), style: const TextStyle(fontSize: 11, color: Colors.blueGrey, fontWeight: FontWeight.bold)));
-            }
-        )),
+        bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 40, // 增加預留高度防止遮擋
+                interval: bottomInterval, // 套用新計算的間隔
+                getTitlesWidget: (v, m) {
+                  if (v < 0 || v > rawDays + 0.1) return const SizedBox.shrink();
+
+                  final date = startDate.add(Duration(minutes: (v * 1440).toInt()));
+
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 12.0), // 增加間距防止被按鈕擋到
+                    child: Text(
+                      DateFormat('MM/dd').format(date),
+                      style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.blueGrey,
+                          fontWeight: FontWeight.bold
+                      ),
+                    ),
+                  );
+                }
+            )
+        ),
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
       ),
@@ -98,12 +134,15 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     );
   }
 
+
   LineChartBarData _getLineData(List<PoemRecord> records, DateTime startDate) {
     Color color = _getLineColor(_selectedScale);
 
     final List<FlSpot> spots = records.map((r) {
+      // 🚀 修正：使用 targetDate 計算與起點的天數差距
+      final displayDate = r.targetDate ?? r.date!;
       return FlSpot(
-          r.date!.difference(startDate).inMinutes / 1440,
+          displayDate.difference(startDate).inMinutes / 1440,
           (r.score ?? 0).toDouble()
       );
     }).toList();
@@ -112,10 +151,9 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       spots: spots,
       color: color,
       barWidth: 4,
-      // 🚀 智慧曲線切換：點太少 (< 3) 變直線，防止 image_591ff6 的下凹問題
-      isCurved: spots.length >= 3,
+      isCurved: _selectedScale != ScaleType.uas7 && spots.length >= 3, // 🚀 UAS7 建議用折線
       preventCurveOverShooting: true,
-      curveSmoothness: 0.25,
+      curveSmoothness: 0.15, // 🚀 降低平滑度
       dotData: FlDotData(
           show: true,
           getDotPainter: (spot, percent, bar, index) {
@@ -250,7 +288,12 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
           onPressed: !hasData ? null : () async {
             final bytes = await _capturePng();
             if (bytes != null) {
-              ExportService.generateClinicalReport(filtered, bytes, _selectedScale);
+              // 🚀 確保傳遞完整的 filtered 清單，ExportService 會根據 targetDate 再次校準
+              ExportService.generateClinicalReport(
+                  filtered,
+                  bytes,
+                  _selectedScale
+              );
             }
           },
           icon: const Icon(Icons.picture_as_pdf_rounded, size: 34),
@@ -269,11 +312,25 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
 
   Widget _buildChartHeader(List<PoemRecord> filtered) {
     String unit = _selectedScale == ScaleType.uas7 ? '每日' : '每週';
+
+    // 🚀 關鍵修正 1：確保觀察區間顯示的是病程的真實歸屬日期 (Target Date)
+    final firstDisplayDate = filtered.isNotEmpty ? (filtered.first.targetDate ?? filtered.first.date!) : null;
+    final lastDisplayDate = filtered.isNotEmpty ? (filtered.last.targetDate ?? filtered.last.date!) : null;
+
     return Column(children: [
-      Text("${_getScaleName(_selectedScale)} $unit趨勢圖", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+      // 🚀 關鍵修正 2：移除 "pw." 前綴。在 Screen 檔案裡要用 Flutter 原生的 TextStyle
+      Text(
+          "${_getScaleName(_selectedScale)} $unit趨勢圖",
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold) // 移除 pw. 和 const 衝突問題
+      ),
       if (filtered.isNotEmpty)
-        Text("${DateFormat('MM/dd').format(filtered.first.date!)} – ${DateFormat('MM/dd').format(filtered.last.date!)}",
-            style: const TextStyle(fontSize: 16, color: Colors.grey)),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+              "${DateFormat('MM/dd').format(firstDisplayDate!)} – ${DateFormat('MM/dd').format(lastDisplayDate!)}",
+              style: const TextStyle(fontSize: 16, color: Colors.grey)
+          ),
+        ),
     ]);
   }
 
@@ -306,14 +363,12 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     Color color = Colors.orange;
 
     if (_selectedScale == ScaleType.adct) {
-      text = "疾病控制不佳 (≥ 7 分)";
+      text = "控制不佳 (≥ 7 分)";
       color = Colors.red;
     } else if (_selectedScale == ScaleType.uas7) {
-      text = "高度活性 (≥ 16 分)";
+      // 🚀 修正：每日圖表應標註每日活性判定
+      text = "高度活性 (每日 ≥ 5 分)";
       color = Colors.orange;
-    } else if (_selectedScale == ScaleType.scorad) {
-      text = "建議與醫師討論分級";
-      color = Colors.purple;
     } else {
       text = "重度病灶 (≥ 17 分)";
       color = Colors.redAccent;

@@ -63,19 +63,24 @@ const PoemRecordSchema = CollectionSchema(
       name: r'severityLabel',
       type: IsarType.string,
     ),
-    r'totalScore': PropertySchema(
+    r'targetDate': PropertySchema(
       id: 9,
+      name: r'targetDate',
+      type: IsarType.dateTime,
+    ),
+    r'totalScore': PropertySchema(
+      id: 10,
       name: r'totalScore',
       type: IsarType.long,
     ),
     r'type': PropertySchema(
-      id: 10,
+      id: 11,
       name: r'type',
       type: IsarType.byte,
       enumMap: _PoemRecordtypeEnumValueMap,
     ),
     r'whealsCount': PropertySchema(
-      id: 11,
+      id: 12,
       name: r'whealsCount',
       type: IsarType.long,
     )
@@ -94,6 +99,19 @@ const PoemRecordSchema = CollectionSchema(
       properties: [
         IndexPropertySchema(
           name: r'date',
+          type: IndexType.value,
+          caseSensitive: false,
+        )
+      ],
+    ),
+    r'targetDate': IndexSchema(
+      id: 5284734288444860006,
+      name: r'targetDate',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'targetDate',
           type: IndexType.value,
           caseSensitive: false,
         )
@@ -158,9 +176,10 @@ void _poemRecordSerialize(
   writer.writeByte(offsets[6], object.scaleType.index);
   writer.writeLong(offsets[7], object.score);
   writer.writeString(offsets[8], object.severityLabel);
-  writer.writeLong(offsets[9], object.totalScore);
-  writer.writeByte(offsets[10], object.type.index);
-  writer.writeLong(offsets[11], object.whealsCount);
+  writer.writeDateTime(offsets[9], object.targetDate);
+  writer.writeLong(offsets[10], object.totalScore);
+  writer.writeByte(offsets[11], object.type.index);
+  writer.writeLong(offsets[12], object.whealsCount);
 }
 
 PoemRecord _poemRecordDeserialize(
@@ -181,10 +200,11 @@ PoemRecord _poemRecordDeserialize(
       _PoemRecordscaleTypeValueEnumMap[reader.readByteOrNull(offsets[6])] ??
           ScaleType.poem;
   object.score = reader.readLongOrNull(offsets[7]);
+  object.targetDate = reader.readDateTimeOrNull(offsets[9]);
   object.type =
-      _PoemRecordtypeValueEnumMap[reader.readByteOrNull(offsets[10])] ??
+      _PoemRecordtypeValueEnumMap[reader.readByteOrNull(offsets[11])] ??
           RecordType.daily;
-  object.whealsCount = reader.readLongOrNull(offsets[11]);
+  object.whealsCount = reader.readLongOrNull(offsets[12]);
   return object;
 }
 
@@ -215,11 +235,13 @@ P _poemRecordDeserializeProp<P>(
     case 8:
       return (reader.readString(offset)) as P;
     case 9:
-      return (reader.readLong(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 10:
+      return (reader.readLong(offset)) as P;
+    case 11:
       return (_PoemRecordtypeValueEnumMap[reader.readByteOrNull(offset)] ??
           RecordType.daily) as P;
-    case 11:
+    case 12:
       return (reader.readLongOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -271,6 +293,14 @@ extension PoemRecordQueryWhereSort
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(
         const IndexWhereClause.any(indexName: r'date'),
+      );
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhere> anyTargetDate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        const IndexWhereClause.any(indexName: r'targetDate'),
       );
     });
   }
@@ -456,6 +486,117 @@ extension PoemRecordQueryWhere
         lower: [lowerDate],
         includeLower: includeLower,
         upper: [upperDate],
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> targetDateIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'targetDate',
+        value: [null],
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause>
+      targetDateIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'targetDate',
+        lower: [null],
+        includeLower: false,
+        upper: [],
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> targetDateEqualTo(
+      DateTime? targetDate) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'targetDate',
+        value: [targetDate],
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> targetDateNotEqualTo(
+      DateTime? targetDate) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'targetDate',
+              lower: [],
+              upper: [targetDate],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'targetDate',
+              lower: [targetDate],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'targetDate',
+              lower: [targetDate],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'targetDate',
+              lower: [],
+              upper: [targetDate],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> targetDateGreaterThan(
+    DateTime? targetDate, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'targetDate',
+        lower: [targetDate],
+        includeLower: include,
+        upper: [],
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> targetDateLessThan(
+    DateTime? targetDate, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'targetDate',
+        lower: [],
+        upper: [targetDate],
+        includeUpper: include,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> targetDateBetween(
+    DateTime? lowerTargetDate,
+    DateTime? upperTargetDate, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'targetDate',
+        lower: [lowerTargetDate],
+        includeLower: includeLower,
+        upper: [upperTargetDate],
         includeUpper: includeUpper,
       ));
     });
@@ -1421,6 +1562,79 @@ extension PoemRecordQueryFilter
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      targetDateIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'targetDate',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      targetDateIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'targetDate',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> targetDateEqualTo(
+      DateTime? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'targetDate',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      targetDateGreaterThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'targetDate',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition>
+      targetDateLessThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'targetDate',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> targetDateBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'targetDate',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> totalScoreEqualTo(
       int value) {
     return QueryBuilder.apply(this, (query) {
@@ -1708,6 +1922,18 @@ extension PoemRecordQuerySortBy
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByTargetDate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetDate', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByTargetDateDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetDate', Sort.desc);
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByTotalScore() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'totalScore', Sort.asc);
@@ -1855,6 +2081,18 @@ extension PoemRecordQuerySortThenBy
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByTargetDate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetDate', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByTargetDateDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetDate', Sort.desc);
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByTotalScore() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'totalScore', Sort.asc);
@@ -1951,6 +2189,12 @@ extension PoemRecordQueryWhereDistinct
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByTargetDate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'targetDate');
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByTotalScore() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'totalScore');
@@ -2029,6 +2273,12 @@ extension PoemRecordQueryProperty
   QueryBuilder<PoemRecord, String, QQueryOperations> severityLabelProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'severityLabel');
+    });
+  }
+
+  QueryBuilder<PoemRecord, DateTime?, QQueryOperations> targetDateProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'targetDate');
     });
   }
 

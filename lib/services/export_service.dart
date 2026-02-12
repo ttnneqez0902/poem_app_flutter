@@ -57,28 +57,49 @@ class ExportService {
   static const double _fsTitle = 20.0;
   static const double _fsLarge = 36.0;
 
+
   static Future<void> generateClinicalReport(
       List<PoemRecord> records,
       Uint8List? chartImageBytes,
-      ScaleType targetScale,
-      {ClinicalReportConfig? config}
-      ) async {
+      ScaleType targetScale, {
+        ClinicalReportConfig? config,
+      }) async {
     final finalConfig = config ?? const ClinicalReportConfig();
 
     if (records.isEmpty) return;
-    final validRecords = records.where((r) => r.date != null && r.scaleType == targetScale).toList();
+
+    // 🚀 1. 數據過濾與排序 (對齊歸屬日期 targetDate)
+    final validRecords = records.where((r) =>
+    (r.targetDate ?? r.date) != null && r.scaleType == targetScale
+    ).toList();
+
     if (validRecords.isEmpty) return;
-    validRecords.sort((a, b) => a.date!.compareTo(b.date!));
+
+    validRecords.sort((a, b) =>
+        (a.targetDate ?? a.date!).compareTo((b.targetDate ?? b.date!))
+    );
+
+    // 🚀 2. 近期數據判定 (僅在此處定義一次，避免重複宣告錯誤)
+    final cutoffDate = DateTime.now().subtract(const Duration(days: 28));
+    final recentRecords = validRecords.where((r) =>
+        (r.targetDate ?? r.date!).isAfter(cutoffDate)
+    ).toList();
+
+    // 🚀 3. 載入字體與建立統一主題
+    final fontTC = await PdfGoogleFonts.notoSansTCRegular();
+    final boldFontTC = await PdfGoogleFonts.notoSansTCBold();
+    final mathFont = pw.Font.ttf(await rootBundle.load("assets/fonts/NotoSansMath-Regular.ttf"));
+
+    final reportTheme = pw.ThemeData.withFont(
+      base: fontTC,
+      bold: boldFontTC,
+      fontFallback: [mathFont],
+    );
 
     final pdf = pw.Document();
-    final font = await PdfGoogleFonts.notoSansTCRegular();
-    final boldFont = await PdfGoogleFonts.notoSansTCBold();
-
     final scaleMeta = _getScaleMetadata(targetScale);
-    final cutoffDate = DateTime.now().subtract(const Duration(days: 28));
-    final recentRecords = validRecords.where((r) => r.date!.isAfter(cutoffDate)).toList();
 
-    // 🚀 數據統計與急性發作計算
+    // 🚀 4. 臨床數據統計計算 (已對齊 targetDate)
     final trend = _analyzeTrend(recentRecords.length >= 2 ? recentRecords : validRecords);
     final cv = _calculateCV(recentRecords.length >= 4 ? recentRecords : validRecords);
     final rapidStat = _calculateRapidIncreases(recentRecords, finalConfig);
@@ -86,18 +107,21 @@ class ExportService {
     final weeklyStats = _buildWeeklyStats(validRecords);
     final patientID = _generateAnonID(validRecords);
 
+    // 🚀 5. 照片快取處理
     final Map<dynamic, Uint8List> photoCache = {};
     for (var r in validRecords) {
       if (r.imagePath != null && r.imagePath!.isNotEmpty && (r.imageConsent ?? true)) {
         final file = File(r.imagePath!);
-        if (await file.exists()) photoCache[r.id] = await file.readAsBytes();
+        if (await file.exists()) {
+          photoCache[r.id] = await file.readAsBytes();
+        }
       }
     }
 
-    // --- Page 1: 封面與復原的趨勢分析 ---
+    // --- Page 1: 封面與趨勢分析 ---
     pdf.addPage(pw.Page(
       pageFormat: PdfPageFormat.a4,
-      theme: pw.ThemeData.withFont(base: font, bold: boldFont),
+      theme: reportTheme,
       build: (_) => pw.Container(
         padding: const pw.EdgeInsets.all(40),
         child: pw.Column(
@@ -114,11 +138,10 @@ class ExportService {
             pw.Divider(color: PdfColors.blue900, thickness: 2.5),
             pw.SizedBox(height: 30),
             _coverField("Patient ID (Anon)", patientID),
-            _coverField("觀察區間", "${DateFormat('yyyy/MM/dd').format(validRecords.first.date!)} - ${DateFormat('yyyy/MM/dd').format(validRecords.last.date!)}"),
+            _coverField("觀察區間", "${DateFormat('yyyy/MM/dd').format(validRecords.first.targetDate ?? validRecords.first.date!)} - ${DateFormat('yyyy/MM/dd').format(validRecords.last.targetDate ?? validRecords.last.date!)}"),
             _coverField("產出時間", DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())),
             pw.SizedBox(height: 30),
 
-            // 🚀 復原點：帶入趨勢與急性發作警示
             _buildTrendSummary(targetScale, trend, cv, rapidStat, streakAlert, finalConfig),
 
             pw.Spacer(),
@@ -131,7 +154,7 @@ class ExportService {
     // --- Page 2: 圖表與統計表 ---
     pdf.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
-      theme: pw.ThemeData.withFont(base: font, bold: boldFont),
+      theme: reportTheme, // 🚀 統一使用 reportTheme
       header: (context) => _buildPdfHeader(scaleMeta['title']!, context),
       build: (context) => [
         if (chartImageBytes != null) ...[
@@ -152,12 +175,12 @@ class ExportService {
 
     // --- Page 3+: 歷史紀錄明細 (分頁邏輯) ---
     final reversedRecords = List<PoemRecord>.from(validRecords.reversed);
-    const int itemsPerPage = 6; // 有照片時建議 6 筆一頁
+    const int itemsPerPage = 6;
     for (int i = 0; i < reversedRecords.length; i += itemsPerPage) {
       final chunk = reversedRecords.skip(i).take(itemsPerPage).toList();
       pdf.addPage(pw.Page(
         pageFormat: PdfPageFormat.a4,
-        theme: pw.ThemeData.withFont(base: font, bold: boldFont),
+        theme: reportTheme, // 🚀 統一使用 reportTheme
         build: (context) => pw.Column(children: [
           _buildPdfHeader(scaleMeta['title']!, context),
           _buildHistoryTable(targetScale, chunk, photoCache),
@@ -167,17 +190,18 @@ class ExportService {
       ));
     }
 
-    // --- Page Last: 附錄 (參數對接修正處) ---
+    // --- Page Last: 附錄 (數學公式區) ---
     pdf.addPage(pw.Page(
       pageFormat: PdfPageFormat.a4,
-      theme: pw.ThemeData.withFont(base: font, bold: boldFont),
+      theme: reportTheme, // 🚀 統一使用 reportTheme
       build: (context) => pw.Column(children: [
         _buildPdfHeader(scaleMeta['title']!, context),
-        // 🚀 核心修正：將 finalConfig 傳入 Helper
-        ...PdfAppendixHelper.buildAppendix(targetScale, finalConfig),
+        // 🚀 呼叫 Appendix 並傳遞 mathFont 以供局部字體控制
+        ...PdfAppendixHelper.buildAppendix(targetScale, finalConfig, mathFont),
       ]),
     ));
 
+    // 🚀 6. 儲存與分享
     final bytes = await pdf.save();
     final tempDir = await getTemporaryDirectory();
     final file = File('${tempDir.path}/${targetScale.name.toUpperCase()}_Report_${DateTime.now().millisecondsSinceEpoch}.pdf');
@@ -223,27 +247,84 @@ class ExportService {
   }
 
   static pw.Widget _buildHistoryTable(ScaleType type, List<PoemRecord> chunk, Map<dynamic, Uint8List> photoCache) {
-    return pw.Table(border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5), columnWidths: {0: const pw.FixedColumnWidth(90), 1: const pw.FixedColumnWidth(90), 2: const pw.FlexColumnWidth(1), 3: const pw.FixedColumnWidth(80)},
+    return pw.Table(
+        border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+        columnWidths: {
+          0: const pw.FixedColumnWidth(100), // 🚀 稍微加寬以容納雙行文字
+          1: const pw.FixedColumnWidth(90),
+          2: const pw.FlexColumnWidth(1),
+          3: const pw.FixedColumnWidth(80)
+        },
         children: [
-          pw.TableRow(decoration: const pw.BoxDecoration(color: PdfColors.blue900), children: [_tableCell("日期", isHeader: true), _tableCell("總分詳情", isHeader: true), _tableCell("患部照片", isHeader: true), _tableCell("分級判定", isHeader: true)]),
-          ...chunk.map((r) {
-            return pw.TableRow(verticalAlignment: pw.TableCellVerticalAlignment.middle, children: [
-              _tableCell(DateFormat('MM/dd\nHH:mm').format(r.date!)),
-              _tableCell("${type.name.toUpperCase()}: ${r.score ?? 0}", isBold: true),
-              pw.Container(height: 70, child: photoCache[r.id] != null ? pw.Image(pw.MemoryImage(photoCache[r.id]!), fit: pw.BoxFit.contain) : pw.Center(child: pw.Text("-"))),
-              _tableCell(_getSeverityText(type, r.score ?? 0), color: _getSeverityColor(type, r.score ?? 0))
-            ]);
-          })
-        ]);
-  }
+          // 表格標題列
+          pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.blue900),
+              children: [
+                _tableCell("日期 (歸屬/錄入)", isHeader: true), // 🚀 明確標示欄位含義
+                _tableCell("總分詳情", isHeader: true),
+                _tableCell("患部照片", isHeader: true),
+                _tableCell("分級判定", isHeader: true)
+              ]
+          ),
 
+          // 數據資料列
+          ...chunk.map((r) {
+            // 🚀 1. 取得歸屬日期（targetDate）與 實際錄入時間（date）
+            final DateTime displayDate = r.targetDate ?? r.date!;
+            final DateTime entryTime = r.date!;
+
+            return pw.TableRow(
+                verticalAlignment: pw.TableCellVerticalAlignment.middle,
+                children: [
+                  // 🚀 2. 修正：第一欄改為 Column，顯示雙日期
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(5),
+                    child: pw.Column(
+                      mainAxisSize: pw.MainAxisSize.min,
+                      children: [
+                        // 大字顯示：病程歸屬日 (例如 2026/02/05)
+                        pw.Text(
+                            DateFormat('yyyy/MM/dd').format(displayDate),
+                            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)
+                        ),
+                        pw.SizedBox(height: 2),
+                        // 小字斜體：實際錄入時間 (例如 錄入於 02/12 12:45)
+                        pw.Text(
+                            "錄入於 ${DateFormat('MM/dd HH:mm').format(entryTime)}",
+                            style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  _tableCell("${type.name.toUpperCase()}: ${r.score ?? 0}", isBold: true),
+
+                  pw.Container(
+                      height: 70,
+                      child: photoCache[r.id] != null
+                          ? pw.Image(pw.MemoryImage(photoCache[r.id]!), fit: pw.BoxFit.contain)
+                          : pw.Center(child: pw.Text("-"))
+                  ),
+
+                  _tableCell(
+                      _getSeverityText(type, r.score ?? 0),
+                      color: _getSeverityColor(type, r.score ?? 0)
+                  )
+                ]
+            );
+          })
+        ]
+    );
+  }
   // --- 🩺 計算與輔助方法 ---
 
   static RapidIncreaseStat _calculateRapidIncreases(List<PoemRecord> sorted, ClinicalReportConfig config) {
     int count = 0; final dates = <DateTime>[];
     for (int i = 1; i < sorted.length; i++) {
       if (((sorted[i].score ?? 0) - (sorted[i-1].score ?? 0)) >= config.rapidIncreaseThreshold) {
-        count++; dates.add(sorted[i].date!);
+        count++;
+        // 🚀 修正：記錄歸屬日期，而非錄入日期
+        dates.add(sorted[i].targetDate ?? sorted[i].date!);
       }
     }
     return RapidIncreaseStat(count, dates);
@@ -263,12 +344,18 @@ class ExportService {
     final mid = sorted.length ~/ 2;
     final firstAvg = sorted.sublist(0, mid).map((e) => e.score ?? 0).reduce((a, b) => a + b) / mid;
     final secondAvg = sorted.sublist(mid).map((e) => e.score ?? 0).reduce((a, b) => a + b) / (sorted.length - mid);
-    final start = sorted.first.date!;
-    final xs = sorted.map((r) => r.date!.difference(start).inDays.toDouble()).toList();
+
+    final firstDate = sorted.first.targetDate ?? sorted.first.date!;
+    final xs = sorted.map((r) => (r.targetDate ?? r.date!).difference(firstDate).inDays.toDouble()).toList();
     final ys = sorted.map((r) => (r.score ?? 0).toDouble()).toList();
-    final mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length;
+    final mx = xs.reduce((a, b) => a + b) / xs.length;
+    final my = ys.reduce((a, b) => a + b) / ys.length;
+
     double num = 0, den = 0;
-    for (int i = 0; i < xs.length; i++) { num += (xs[i]-mx)*(ys[i]-my); den += (xs[i]-mx)*(xs[i]-mx); }
+    for (int i = 0; i < xs.length; i++) {
+      num += (xs[i]-mx)*(ys[i]-my);
+      den += (xs[i]-mx)*(xs[i]-mx);
+    }
     final slope = den == 0 ? 0.0 : num / den;
     return ScoreTrend(slope <= -0.1 ? "趨於穩定" : (slope >= 0.1 ? "趨於嚴重" : "穩定"), secondAvg - firstAvg, (firstAvg >= 1 ? ((firstAvg - secondAvg) / firstAvg) * 100 : 0), slope);
   }
@@ -324,16 +411,45 @@ class ExportService {
 
   static List<WeeklyStat> _buildWeeklyStats(List<PoemRecord> records) {
     if (records.isEmpty) return [];
-    final start = DateTime(records.first.date!.year, records.first.date!.month, records.first.date!.day);
-    final days = records.last.date!.difference(start).inDays;
+
+    // 🚀 1. 取得排序後的第一筆與最後一筆的「歸屬日期」作為統計基準
+    final firstDate = records.first.targetDate ?? records.first.date!;
+    final lastDate = records.last.targetDate ?? records.last.date!;
+
+    // 標準化起始日期（去除時分秒）
+    final start = DateTime(firstDate.year, firstDate.month, firstDate.day);
+    final int days = lastDate.difference(start).inDays;
     final int weeksCount = (days / 7).ceil() + 1;
+
     final stats = <WeeklyStat>[];
+
     for (int w = 0; w < weeksCount; w++) {
-      final wStart = start.add(Duration(days: w * 7)), wEnd = wStart.add(const Duration(days: 7));
-      final wRecords = records.where((r) => r.date!.isAfter(wStart.subtract(const Duration(seconds: 1))) && r.date!.isBefore(wEnd)).toList();
+      // 定義該週的起點與終點
+      final wStart = start.add(Duration(days: w * 7));
+      final wEnd = wStart.add(const Duration(days: 7));
+
+      // 🚀 2. 關鍵修正：使用歸屬日期來過濾該週內的紀錄
+      final wRecords = records.where((r) {
+        final recordPathDate = r.targetDate ?? r.date!;
+        // 檢查日期是否在 [wStart, wEnd) 區間內
+        return (recordPathDate.isAtSameMomentAs(wStart) || recordPathDate.isAfter(wStart))
+            && recordPathDate.isBefore(wEnd);
+      }).toList();
+
       if (wRecords.isNotEmpty) {
         final scores = wRecords.map((e) => e.score ?? 0).toList();
-        stats.add(WeeklyStat(week: w + 1, start: wStart, end: wEnd.subtract(const Duration(days: 1)), avg: scores.reduce((a, b) => a + b) / scores.length, min: scores.reduce((a, b) => a < b ? a : b), max: scores.reduce((a, b) => a > b ? a : b)));
+        final double average = scores.reduce((a, b) => a + b) / scores.length;
+        final int minScore = scores.reduce((a, b) => a < b ? a : b);
+        final int maxScore = scores.reduce((a, b) => a > b ? a : b);
+
+        stats.add(WeeklyStat(
+          week: w + 1,
+          start: wStart,
+          end: wEnd.subtract(const Duration(days: 1)), // 顯示為該週最後一天
+          avg: average,
+          min: minScore,
+          max: maxScore,
+        ));
       }
     }
     return stats;
@@ -345,5 +461,9 @@ class ExportService {
   static pw.Widget _tableCell(String t, {bool isHeader = false, bool isBold = false, PdfColor? color}) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Center(child: pw.Text(t, textAlign: pw.TextAlign.center, style: pw.TextStyle(color: isHeader ? PdfColors.white : (color ?? PdfColors.black), fontSize: isHeader ? 11 : 10, fontWeight: (isHeader || isBold) ? pw.FontWeight.bold : null))));
   static pw.Widget _buildDisclaimerBox(String msg) => pw.Container(width: double.infinity, padding: const pw.EdgeInsets.all(12), decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey600), borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6))), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [pw.Text("臨床免責聲明", style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)), pw.Text(msg, style: const pw.TextStyle(fontSize: 10))]));
   static PdfColor _getTrendColor(String l) => l == "趨於穩定" ? PdfColors.green700 : (l == "趨於嚴重" ? PdfColors.red700 : PdfColors.black);
-  static String _generateAnonID(List<PoemRecord> r) { final h = r.fold<int>(0, (a, b) => a ^ b.date!.millisecondsSinceEpoch); return "CL-${(h.abs() % 100000).toString().padLeft(5, '0')}"; }
+  static String _generateAnonID(List<PoemRecord> r) {
+    // 🚀 建議改為使用 id 或穩定欄位，避免補填後 ID 發生變動
+    final h = r.fold<int>(0, (a, b) => a ^ b.id);
+    return "CL-${(h.abs() % 100000).toString().padLeft(5, '0')}";
+  }
 }

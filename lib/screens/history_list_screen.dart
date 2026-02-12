@@ -83,21 +83,20 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
           Expanded(
             child: FutureBuilder<List<PoemRecord>>(
+              // 🚀 確保每次觸發 setState 都會重新執行資料庫查詢
               future: isarService.getAllRecords(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                // 🚀 核心修正：安全處理 null，防止報錯
                 final allRecords = snapshot.data ?? [];
 
                 final filteredRecords = allRecords.where((r) {
-                  // 排除掉 RecordType.daily (醫師不看的數據)
                   if (r.type == RecordType.daily) return false;
-// 🚀 新增：檢查該紀錄所屬的量表目前是否被啟用
+
                   bool isScaleEnabled = _enabledScales[r.scaleType] ?? true;
-                  if (!isScaleEnabled) return false; // 如果該量表被關閉，歷史清單也不顯示它
+                  if (!isScaleEnabled) return false;
 
                   switch (_selectedFilter) {
                     case HistoryViewFilter.all: return true;
@@ -108,9 +107,13 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                   }
                 }).toList();
 
-                // 依日期由新到舊排序
-                filteredRecords.sort((a, b) =>
-                    (b.date ?? DateTime.now()).compareTo(a.date ?? DateTime.now()));
+                // 🚀 關鍵修正：排序邏輯
+                // 依「目標歸屬日期」由新到舊排序，若無則退而求其次用錄入日期
+                filteredRecords.sort((a, b) {
+                  final dateA = a.targetDate ?? a.date ?? DateTime.now();
+                  final dateB = b.targetDate ?? b.date ?? DateTime.now();
+                  return dateB.compareTo(dateA); // 由新到舊
+                });
 
                 if (filteredRecords.isEmpty) return _buildEmptyState();
 
@@ -183,13 +186,18 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   // --- 🎨 紀錄卡片：長輩友善與 Null 安全 ---
 
   Widget _buildRecordCard(BuildContext context, PoemRecord record) {
-    // 🚀 安全讀取：使用 ?? 防止紅畫面
     final Color iconColor = _getSeverityColor(record);
     final IconData iconData = _getScaleIcon(record.scaleType);
-    final String dateStr = record.date != null
-        ? DateFormat('yyyy/MM/dd HH:mm').format(record.date!)
-        : "日期未知";
-    final int score = record.score ?? 0;
+
+    // 🚀 修正 1：大標題顯示「歸屬日期」(補填的那天)
+    final String targetDateStr = record.targetDate != null
+        ? DateFormat('yyyy/MM/dd').format(record.targetDate!)
+        : (record.date != null ? DateFormat('yyyy/MM/dd').format(record.date!) : "日期未知");
+
+    // 🚀 修正 2：副標題或細節標註「錄入時間」(實際填寫當下)
+    final String createdTimeStr = record.date != null
+        ? DateFormat('MM/dd HH:mm').format(record.date!)
+        : "";
 
     return Card(
       margin: const EdgeInsets.only(top: 12),
@@ -199,10 +207,22 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
           backgroundColor: iconColor.withOpacity(0.1),
           child: Icon(iconData, color: iconColor),
         ),
-        title: Text(dateStr, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        subtitle: Text(
-          "${_getScaleName(record.scaleType)}：${_getSeverityText(record)} ($score分)",
-          style: const TextStyle(fontSize: 14),
+        // 顯示歸屬日期
+        title: Text(targetDateStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "${_getScaleName(record.scaleType)}：${_getSeverityText(record)} (${record.score ?? 0}分)",
+              style: const TextStyle(fontSize: 14),
+            ),
+            // 🚀 新增：標註錄入時間
+            if (createdTimeStr.isNotEmpty)
+              Text(
+                  "實際錄入：$createdTimeStr", // 🚀 增加字樣讓語意更清楚
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic)
+              ),
+          ],
         ),
         children: [
           Padding(

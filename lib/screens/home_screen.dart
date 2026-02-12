@@ -63,23 +63,22 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- 🚀 核心數據邏輯：動態滾動並確保涵蓋未來 2 天 ---
   Future<Map<String, dynamic>> _getTrackerData() async {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day); // 假設今天是 02/12
+    final today = DateTime(now.year, now.month, now.day);
     final allRecords = await isarService.getAllRecords();
 
-    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList()
-      ..sort((a, b) => a.date!.compareTo(b.date!));
-
-    // 🚀 關鍵修改：
-    // 如果從今天 (2/12) 往回推 8 天，起始日就是 2/04。
-    // 搭配下方的 List.generate(14)，最後一格就會是 2/04 + 13 = 2/17。
-    // 這樣 2/14 就會完美出現在清單中，且前面有足夠的 10 天空間 (2/04~2/14)。
+    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList();
     DateTime uas7Start = today.subtract(const Duration(days: 8));
 
     return {
       'uas7Start': uas7Start,
       'uas7Status': List.generate(14, (i) {
         final targetDate = uas7Start.add(Duration(days: i));
-        return uas7Records.any((r) => DateUtils.isSameDay(r.date, targetDate));
+
+        // 🚀 核心修正：比對紀錄時，必須優先使用 targetDate
+        // 這樣你 2/12 補填 1/29 的資料，1/29 那一格才會正確顯示「已填寫」
+        return uas7Records.any((r) =>
+            DateUtils.isSameDay(r.targetDate ?? r.date, targetDate)
+        );
       }),
       'uas7Records': uas7Records,
       'adct': allRecords.where((r) => r.scaleType == ScaleType.adct).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
@@ -145,13 +144,16 @@ class _HomeScreenState extends State<HomeScreen> {
             // 🚀 四個量表大方塊區域
             _buildScaleGrid(context),
 
-            const SizedBox(height: 24),
-            const Divider(),
+            // 🚀 修正 1：縮小間隔，將 24 改為 12
+            const SizedBox(height: 0),
+            const Divider(thickness: 0.5, height: 1), // 讓線條更精緻
+            const SizedBox(height: 12),
 
             // 次要導覽按鈕 (趨勢圖、歷史紀錄)
             _buildSecondaryNavigation(context),
 
-            const SizedBox(height: 24),
+            // 🚀 修正 2：縮小按鈕與輪播標題間的距離，將 24 改為 16
+            const SizedBox(height: 16),
             _buildSwiperHeader(),
 
             // 下方的臨床進度輪播卡片
@@ -204,36 +206,34 @@ class _HomeScreenState extends State<HomeScreen> {
           return InkWell(
             onTap: () async {
               if (_isManagementMode) {
-                // 1. 🔧 管理模式：切換開關
                 HapticFeedback.mediumImpact();
                 setState(() => _enabledScales[type] = !isEnabled);
               } else if (isEnabled) {
-                // 2. 📝 正常模式且功能開啟：進入測驗
                 HapticFeedback.lightImpact();
 
-                // 🚀 A. 等待測驗結束返回
-                await Navigator.push(
+                // 🚀 1. 執行導航並明確指定期待回傳 bool
+                final result = await Navigator.push<bool>(
                   context,
                   MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: type)),
                 );
 
-                // 🚀 B. 返回後立即刷新首頁數據（勾勾變色與進度條更新）
-                setState(() {});
+                // 🚀 2. 核心修正：處理返回後的資料更新
+                // 只要 result 為 true，代表資料庫已有變動（包含補填或正常填寫）
+                if (result == true && mounted) {
+                  // 第一步：立即觸發 setState。這會讓父層的 FutureBuilder 重新執行 _getTrackerData()
+                  // 這樣從資料庫撈出來的最新 uas7Status 才會反應在日曆上
+                  setState(() {});
 
-                // 🚀 C. 關鍵修正：延遲一點點時間，確保 PageView 渲染完成後自動跳轉到該量表卡片
-                Future.delayed(const Duration(milliseconds: 150), () {
-                  _jumpToScalePage(type);
-                });
-
+                  // 第二步：稍微延遲，等待新的數據渲染完成後，再執行 PageView 的自動對齊動畫
+                  Future.delayed(const Duration(milliseconds: 300), () {
+                    if (mounted) {
+                      _jumpToScalePage(type);
+                    }
+                  });
+                }
               } else {
-                // 3. 🚫 功能已關閉：執行您原本的震動與提示邏輯
                 HapticFeedback.vibrate();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                      content: Text("${scale['title']} 功能已關閉"),
-                      behavior: SnackBarBehavior.floating
-                  ),
-                );
+                _showDisabledScaleNotice(scale['title'], scale['sub']); // 使用您之前定義的彈窗提示
               }
             },
             child: _buildScaleCard(scale, isEnabled),
@@ -257,44 +257,85 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-Widget _buildScaleCard(Map<String, dynamic> scale, bool isEnabled) {
-  return Stack(
-    children: [
-      ColorFiltered(
-        colorFilter: isEnabled
-            ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
-            : const ColorFilter.matrix(<double>[0.2126, 0.7152, 0.0722, 0, 0, 0.2126, 0.7152, 0.0722, 0, 0, 0.2126, 0.7152, 0.0722, 0, 0, 0, 0, 0, 1, 0]),
-        child: Container(
-          width: double.infinity, // 確保填滿 Grid 空間
-          decoration: BoxDecoration(
-            color: isEnabled ? scale['color'].withOpacity(0.1) : Colors.grey.shade200,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: isEnabled ? scale['color'] : Colors.grey.shade400, width: 2),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(scale['icon'], size: 40, color: isEnabled ? scale['color'] : Colors.grey),
-              const SizedBox(height: 8),
-              Text(scale['title'], style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: isEnabled ? scale['color'] : Colors.grey)),
-              Text(scale['sub'], style: TextStyle(fontSize: 14, color: isEnabled ? scale['color'].withOpacity(0.8) : Colors.grey, fontWeight: FontWeight.bold)),
-            ],
+  Widget _buildScaleCard(Map<String, dynamic> scale, bool isEnabled) {
+    return Stack(
+      children: [
+        // 使用 ColorFiltered 處理禁用時的灰階效果
+        ColorFiltered(
+          colorFilter: isEnabled
+              ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
+              : const ColorFilter.matrix(<double>[
+            0.2126, 0.7152, 0.0722, 0, 0,
+            0.2126, 0.7152, 0.0722, 0, 0,
+            0.2126, 0.7152, 0.0722, 0, 0,
+            0, 0, 0, 1, 0
+          ]),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200), // 增加切換模式時的平滑感
+            width: double.infinity,
+            decoration: BoxDecoration(
+              // 🚀 改為白色底色或極淡的主題色，陰影才顯眼
+              color: isEnabled ? Colors.white : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(24),
+              // 🚀 核心修改：加入動態陰影
+              boxShadow: [
+                BoxShadow(
+                  color: isEnabled
+                      ? (scale['color'] as Color).withOpacity(0.15)
+                      : Colors.black.withOpacity(0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6), // 向下偏移，增加懸浮感
+                ),
+              ],
+              // 邊框稍微調淡，讓陰影當主角
+              border: Border.all(
+                  color: isEnabled ? scale['color'].withOpacity(0.4) : Colors.grey.shade300,
+                  width: 1.5
+              ),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(scale['icon'], size: 40, color: isEnabled ? scale['color'] : Colors.grey),
+                const SizedBox(height: 8),
+                Text(
+                    scale['title'],
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: isEnabled ? scale['color'] : Colors.grey
+                    )
+                ),
+                Text(
+                    scale['sub'],
+                    style: TextStyle(
+                        fontSize: 14,
+                        color: isEnabled ? scale['color'].withOpacity(0.8) : Colors.grey,
+                        fontWeight: FontWeight.bold
+                    )
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-      // 🚀 管理模式的小眼睛標記
-      if (_isManagementMode)
-        Positioned(
-          top: 8, right: 8,
-          child: CircleAvatar(
-            radius: 12,
-            backgroundColor: isEnabled ? Colors.green : Colors.red,
-            child: Icon(isEnabled ? Icons.visibility : Icons.visibility_off, size: 16, color: Colors.white),
+        // 🚀 管理模式的小眼睛標記
+        if (_isManagementMode)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: CircleAvatar(
+              radius: 12,
+              backgroundColor: isEnabled ? Colors.green : Colors.red,
+              child: Icon(
+                  isEnabled ? Icons.visibility : Icons.visibility_off,
+                  size: 16,
+                  color: Colors.white
+              ),
+            ),
           ),
-        ),
-    ],
-  );
-}
+      ],
+    );
+  }
 
   Widget _buildProgressSwiper() {
     final enabledTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
@@ -303,21 +344,21 @@ Widget _buildScaleCard(Map<String, dynamic> scale, bool isEnabled) {
     return Column(
       children: [
         SizedBox(
-          height: 295, // 🚀 關鍵修正：高度從 265 提升到 295，徹底解決 Overflow
+          height: 295,
           child: FutureBuilder<Map<String, dynamic>>(
+            // 🚀 確保每次 setState 都會重新執行數據庫查詢
             future: _getTrackerData(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+              // 這裡拿到的 data 已經是根據新的 targetDate 比對過的結果
               final data = snapshot.data!;
+
               return PageView.builder(
                 controller: _pageController,
-                itemCount: _virtualTotalCount, // 使用這個大數字
+                itemCount: _virtualTotalCount,
                 itemBuilder: (context, index) {
-                  if (enabledTypes.isEmpty) return const SizedBox.shrink();
                   final type = enabledTypes[index % enabledTypes.length];
-
-                  // 🚀 關鍵：移除外層 Padding，讓卡片直接貼著 PageView 給它的邊界
-                  // 這樣隔壁頁面的內容才會緊鄰著空隙出現
                   return _buildCardByType(type, data);
                 },
               );
@@ -332,8 +373,14 @@ Widget _buildScaleCard(Map<String, dynamic> scale, bool isEnabled) {
 
 // 在 HomeScreen.dart 內
   Widget _buildCardByType(ScaleType type, Map<String, dynamic> data) {
-    // 🚀 統一加入 setState(() {}) 刷新邏輯
-    final refresh = () => setState(() {});
+    // 🚀 核心邏輯：定義一個刷新函式，當子組件完成填寫返回時調用
+    final VoidCallback onRefresh = () {
+      if (mounted) {
+        setState(() {
+          // 觸發 build，進而讓 FutureBuilder 重新執行 _getTrackerData()
+        });
+      }
+    };
 
     switch (type) {
       case ScaleType.uas7:
@@ -341,13 +388,29 @@ Widget _buildScaleCard(Map<String, dynamic> scale, bool isEnabled) {
           startDate: data['uas7Start'],
           completionStatus: data['uas7Status'],
           history: data['uas7Records'],
+          // 🚀 如果你有在 Uas7TrackerCard 定義回標，請傳入
+          onRefresh: onRefresh, // 🚀 記得在 Uas7TrackerCard.dart 裡補上這個參數定義
         );
       case ScaleType.adct:
-        return WeeklyTrackerCard(type: ScaleType.adct, history: data['adct']);
+        return WeeklyTrackerCard(
+          type: ScaleType.adct,
+          history: data['adct'],
+          // onRefresh: onRefresh,
+        );
       case ScaleType.poem:
-        return WeeklyTrackerCard(type: ScaleType.poem, history: data['poem']);
+        return WeeklyTrackerCard(
+          type: ScaleType.poem,
+          history: data['poem'],
+          // onRefresh: onRefresh,
+        );
       case ScaleType.scorad:
-        return WeeklyTrackerCard(type: ScaleType.scorad, history: data['scorad']);
+        return WeeklyTrackerCard(
+          type: ScaleType.scorad,
+          history: data['scorad'],
+          // onRefresh: onRefresh,
+        );
+      default:
+        return const SizedBox.shrink();
     }
   }
 
@@ -412,29 +475,47 @@ Widget _buildScaleCard(Map<String, dynamic> scale, bool isEnabled) {
         children: [
           Expanded(
             child: _buildSmallMenuButton(context, "查看趨勢", Icons.bar_chart_rounded, Colors.teal.shade700,
-                    () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen()))),
+                    () async {
+                  await Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen()));
+                  if (mounted) setState(() {}); // 返回時刷新，確保資料一致
+                }),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: _buildSmallMenuButton(context, "歷史紀錄", Icons.list_alt_rounded, Colors.blueGrey.shade700,
-                    () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen()))),
+                    () async {
+                  await Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen()));
+                  if (mounted) setState(() {}); // 歷史紀錄最常發生刪除/修改，務必刷新
+                }),
           ),
         ],
-      ),
+      )
     );
   }
 
   Widget _buildSmallMenuButton(BuildContext context, String label, IconData icon, Color color, VoidCallback onTap) {
     return ElevatedButton.icon(
       onPressed: onTap,
-      icon: Icon(icon, size: 20),
-      label: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+      icon: Icon(icon, size: 24),
+      label: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 18, // 🚀 字體放大
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.2, // 增加字距讓質感更好
+          )
+      ),
       style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        // 🚀 垂直 Padding 從 12 增加到 18，讓按鈕看起來更厚實
+        padding: const EdgeInsets.symmetric(vertical: 14),
         backgroundColor: Colors.white,
         foregroundColor: color,
         elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: color.withOpacity(0.3))),
+        shadowColor: color.withOpacity(0.3),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15), // 圓角稍微加大一點點
+            side: BorderSide(color: color.withOpacity(0.3), width: 1.5)
+        ),
       ),
     );
   }

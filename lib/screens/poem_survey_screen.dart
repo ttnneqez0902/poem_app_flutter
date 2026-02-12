@@ -41,9 +41,8 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     super.initState();
     _selectedScale = widget.initialType;
     if (widget.oldRecord != null) {
-      // 🚀 編輯模式：抓取舊資料
-      _recordDate = widget.oldRecord!.date!;
-      // 修正點：使用 ?? [] 確保即使 answers 為空也不會報錯
+      // 🚀 編輯模式
+      _recordDate = widget.oldRecord!.targetDate ?? widget.oldRecord!.date ?? DateTime.now();
       _answers = List<int>.from(widget.oldRecord!.answers ?? []);
       _answerTimestamps = List.filled(_answers.length, _recordDate);
       if (widget.oldRecord!.imagePath != null) {
@@ -51,7 +50,8 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
       }
       _imageConsent = widget.oldRecord!.imageConsent ?? true;
     } else {
-      // 新增模式
+      // 🚀 新增模式（含補填）
+      // 如果有傳入 targetDate，則使用它作為歸屬日期
       _recordDate = widget.targetDate ?? DateTime.now();
       _initAnswers(_selectedScale);
     }
@@ -119,19 +119,21 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
       // 🚀 如果是編輯模式，沿用舊的 ID
       final record = widget.oldRecord ?? PoemRecord();
 
+      // 🚀 核心儲存邏輯修正
       record
-        ..date = _recordDate // 🚀 關鍵：儲存補填日期而非「現在」
+        ..date = DateTime.now() // 🚀 紀錄「真實寫入」的時間 (用於顯示 hh:mm)
+        ..targetDate = _recordDate // 🚀 紀錄「歸屬」日期 (用於首頁卡片定位)
         ..scaleType = _selectedScale
         ..score = total
         ..answers = _answers
         ..imagePath = _image?.path
         ..imageConsent = _imageConsent;
 
-      await isarService.saveRecord(record); // Isar 會根據 ID 自動判斷是新增或更新
+      await isarService.saveRecord(record);
 
       if (mounted) {
         HapticFeedback.heavyImpact();
-        Navigator.pop(context, _selectedScale);
+        Navigator.pop(context, true); // 🚀 改為傳回 true
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("儲存失敗：$e")));

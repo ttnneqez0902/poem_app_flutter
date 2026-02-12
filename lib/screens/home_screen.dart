@@ -10,7 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-
+import 'dart:io'; // 🚀 必須 import，用於處理 File
+import 'package:image_picker/image_picker.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const int _virtualInitialPage = 500;
   final int _virtualTotalCount = 1000;
+  String? _localPhotoPath; // 用於存放本地圖片路徑
 
   late final PageController _pageController = PageController(
     initialPage: _virtualInitialPage,
@@ -42,6 +44,41 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _checkUserStatus(); // 檢查登入狀態
     _loadSettings(); // 初始化時載入設定
+    _loadLocalPhoto(); // 新增這行
+  }
+
+  Future<void> _loadLocalPhoto() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _localPhotoPath = prefs.getString('user_custom_photo');
+    });
+  }
+
+  // 🚀 2. 實作挑選圖片邏輯
+  Future<void> _handleChangePhoto() async {
+    final ImagePicker picker = ImagePicker();
+
+    // 彈出選單讓使用者選相簿或相機
+    final XFile? pickedFile = await picker.pickImage(
+      source: ImageSource.gallery, // 預設開啟相簿
+      maxWidth: 500,  // 限制寬度節省記憶體
+      imageQuality: 80, // 稍微壓縮畫質
+    );
+
+    if (pickedFile != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_custom_photo', pickedFile.path); // 儲存路徑
+
+      setState(() {
+        _localPhotoPath = pickedFile.path;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("大頭貼已更新 (僅存於此裝置)")),
+        );
+      }
+    }
   }
 
   void _checkUserStatus() {
@@ -130,27 +167,71 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
+
       appBar: AppBar(
-        // 🚀 將 leading 換成大頭貼按鈕
-        leadingWidth: 70,
+        leadingWidth: 80,
         leading: Padding(
-          padding: const EdgeInsets.only(left: 18, top: 6, bottom: 6),
-          child: InkWell(
-            onTap: () => _handleLogout(context), // 點擊大頭貼觸發登出
-            borderRadius: BorderRadius.circular(25),
-            child: CircleAvatar(
-              // 🚀 核心修正 3：加大半徑 (從預設約 20 增加到 25+)
-              radius: 25,
-              backgroundColor: Colors.blue.shade100,
-              backgroundImage: user?.photoURL != null
-                  ? NetworkImage(user!.photoURL!)
-                  : null,
-              child: user?.photoURL == null
-                  ? Text(
-                user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-              )
-                  : null,
+          padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
+          child: PhysicalModel(
+            color: Colors.transparent,
+            shape: BoxShape.circle,
+            elevation: 4,
+            shadowColor: Colors.black.withOpacity(0.4),
+            // 🚀 核心改動：使用 PopupMenuButton 讓選單在頭像旁跳出
+            child: PopupMenuButton<String>(
+              offset: const Offset(0, 56), // 調整彈出位置在頭像下方一點
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              onSelected: (value) {
+                if (value == 'photo') {
+                  _handleChangePhoto();
+                } else if (value == 'logout') {
+                  _handleLogout(context);
+                }
+              },
+              // 這是原本的頭像 UI
+              child: CircleAvatar(
+                radius: 30,
+                backgroundColor: Colors.white,
+                child: CircleAvatar(
+                  radius: 27,
+                  backgroundColor: Colors.blue.shade100,
+                  backgroundImage: (_localPhotoPath != null && File(_localPhotoPath!).existsSync()
+                      ? FileImage(File(_localPhotoPath!))
+                      : (user?.photoURL != null
+                      ? NetworkImage(user!.photoURL!)
+                      : null)) as ImageProvider?,
+                  child: (_localPhotoPath == null && user?.photoURL == null)
+                      ? Text(
+                    user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+                  )
+                      : null,
+                ),
+              ),
+              // 🚀 定義彈出的選單內容
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'photo',
+                  child: Row(
+                    children: [
+                      Icon(Icons.photo_library_rounded, color: Colors.blue),
+                      SizedBox(width: 12),
+                      Text("更換頭像"),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(), // 分割線
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout_rounded, color: Colors.redAccent),
+                      SizedBox(width: 12),
+                      Text("登出系統"),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -236,6 +317,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   // --- 說明彈窗實作 ---
   void _showManagementGuide() {

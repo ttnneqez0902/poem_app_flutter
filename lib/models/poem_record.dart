@@ -1,8 +1,11 @@
 import 'package:isar/isar.dart';
 part 'poem_record.g.dart';
+// 🚀 修正 1: 確保 part 檔名與檔名一致 (假設此檔名為 poem_record.dart)
+
 
 enum RecordType { daily, weekly }
 enum ScaleType { poem, uas7, scorad, adct }
+
 
 @collection
 class PoemRecord {
@@ -20,6 +23,9 @@ class PoemRecord {
   @Index()
   DateTime? targetDate;
 
+  @Index()
+  bool isSynced = false; // 🚀 新增同步標記
+
   @enumerated
   @Index()
   ScaleType scaleType = ScaleType.adct;
@@ -35,20 +41,27 @@ class PoemRecord {
   String? imagePath;
   bool? imageConsent = true;
 
+  // 🚀 新增這個欄位來儲存臨床備註
+  String? note;
+
   int get totalScore => score ?? 0;
 
   // 🚀 4. Firestore 同步方法：將物件轉為雲端 Map 格式
-  Map<String, dynamic> toFirestore() => {
-    'userId': userId,
-    'score': score,
-    'scaleType': scaleType.name,
-    'type': type.name,
-    'date': date?.toIso8601String(),
-    'targetDate': targetDate?.toIso8601String(),
-    'imagePath': imagePath, // 注意：換手機路徑會失效，需另行處理 Storage
-    'imageConsent': imageConsent,
-    'answers': answers,
-  };
+  // 🚀 修正 3: Firestore 轉換邏輯優化
+  Map<String, dynamic> toFirestore() {
+    return {
+      // 'userId': userId, // 💡 其實可以不傳，因為 JSON 是存在該使用者的路徑下，省流量
+      'score': score,
+      'scaleType': scaleType.name,
+      'type': type.name,
+      'date': date?.toIso8601String(),
+      'targetDate': targetDate?.toIso8601String(),
+      'imageConsent': imageConsent,
+      'answers': answers,
+      'note': note, // 🚀 同步備註到雲端
+      // 'imagePath': imagePath, // 💡 手機路徑換手機就失效了，雲端紀錄建議不存這項
+    };
+  }
 
   // 🩺 5. 臨床嚴重度標籤邏輯
   String get severityLabel {

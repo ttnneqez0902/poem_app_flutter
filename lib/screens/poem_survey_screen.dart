@@ -5,6 +5,8 @@ import '../main.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:intl/intl.dart'; // 🚀 補上這行
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class PoemSurveyScreen extends StatefulWidget {
   final ScaleType initialType;
@@ -116,31 +118,106 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
 
     try {
       final total = _answers.where((e) => e != -1).fold(0, (a, b) => a + b);
-      // 🚀 如果是編輯模式，沿用舊的 ID
-      final record = widget.oldRecord ?? PoemRecord();
 
-      // 🚀 核心儲存邏輯修正
+      // 1. 建立並配置紀錄物件
+      final record = widget.oldRecord ?? PoemRecord();
       record
-        ..date = DateTime.now() // 🚀 紀錄「真實寫入」的時間 (用於顯示 hh:mm)
-        ..targetDate = _recordDate // 🚀 紀錄「歸屬」日期 (用於首頁卡片定位)
+        ..userId = FirebaseAuth.instance.currentUser?.uid
+        ..date = DateTime.now()
+        ..targetDate = _recordDate
         ..scaleType = _selectedScale
         ..score = total
         ..answers = _answers
         ..imagePath = _image?.path
-        ..imageConsent = _imageConsent;
+        ..imageConsent = _imageConsent
+        ..isSynced = false; // 🚀 確保新紀錄初始為未同步
 
+      // 🔥 步驟 A：本地優先 (必成功)
       await isarService.saveRecord(record);
+      debugPrint("✅ 本地 Isar 儲存成功");
+
+      // 🔥 步驟 B：觸發最佳化同步 (每 2 筆才真的上傳)
+      // 不使用 await，讓它在背景執行，不卡住 UI 關閉頁面
+      syncRecordsOptimized();
 
       if (mounted) {
         HapticFeedback.heavyImpact();
-        Navigator.pop(context, true); // 🚀 改為傳回 true
+        Navigator.pop(context, true);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("儲存失敗：$e")));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("本地儲存失敗：$e"), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
+
+// 🚀 核心省錢邏輯：JSON 打包 + 批量同步
+  Future<void> syncRecordsOptimized() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      // 1. 從 Isar 抓取「本使用者」且「尚未同步」的所有紀錄
+      // 使用 isarService 內部的實體，或直接使用你在 main 定義的 isar
+      final unsyncedRecords = await isarService.getUnsyncedRecords(user.uid);
+
+      // 🚀 策略：積累達 2 筆才觸發一次寫入，極大幅度節省寫入次數
+      if (unsyncedRecords.length < 2) {
+        debugPrint("⏳ 未達 2 筆（目前 ${unsyncedRecords.length} 筆），暫存本地以節省雲端額度");
+        return;
+      }
+
+      debugPrint("📦 達到同步門檻，開始打包上傳...");
+
+      // 2. 按月份分組 (JSON 打包法的關鍵：一個月一個 Document)
+      Map<String, List<PoemRecord>> groupedByMonth = {};
+      for (var rec in unsyncedRecords) {
+        String monthKey = "${rec.targetDate?.year}_${rec.targetDate?.month.toString().padLeft(2, '0')}";
+        groupedByMonth.putIfAbsent(monthKey, () => []).add(rec);
+      }
+
+      // 3. 執行寫入
+      for (var monthKey in groupedByMonth.keys) {
+        final docRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('monthly_data')
+            .doc(monthKey);
+
+        // 將該月份的多筆紀錄轉為 JSON List
+        List<Map<String, dynamic>> newJsonData = groupedByMonth[monthKey]!
+            .map((r) {
+          var map = r.toFirestore();
+          // 🚀 強制確保 answers 是符合 Firestore 格式的 List
+          if (map['answers'] != null) {
+            map['answers'] = List<int>.from(map['answers']);
+          }
+          return map;
+        })
+            .toList();
+
+        // 🔥 使用 arrayUnion：將資料塞進 records 陣列，不覆蓋舊資料，且只算 1 次寫入
+        await docRef.set({
+          'records': FieldValue.arrayUnion(newJsonData),
+          'lastUpdate': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        // 4. 同步成功後，更新本地 Isar 狀態為已同步
+        for (var rec in groupedByMonth[monthKey]!) {
+          rec.isSynced = true;
+          await isarService.saveRecord(rec); // 更新標記
+        }
+        debugPrint("☁️ $monthKey 份資料打包同步成功！");
+      }
+    } catch (e) {
+      debugPrint("❌ 同步過程中出錯 (可能離線): $e");
+    }
+  }
+
 
   // 🚀 新增：直接跳轉至最後一頁（照片頁）的方法
   void _jumpToPhotoPage(int totalPages) {

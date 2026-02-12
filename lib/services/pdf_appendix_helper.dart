@@ -4,8 +4,8 @@ import '../models/poem_record.dart';
 import 'export_service.dart'; // 🚀 引用以取得 ClinicalReportConfig 定義
 
 class PdfAppendixHelper {
-  static const double _fsHeader = 16.0;
-  static const double _fsSmall = 12.0;
+  static const double _fsHeader = 14.0;
+  static const double _fsSmall = 11.0;
 
   // 🚀 核心修正 1：增加 pw.Font mathFont 參數，解決 ExportService 呼叫時的參數數量錯誤
   static List<pw.Widget> buildAppendix(ScaleType type, ClinicalReportConfig config, pw.Font mathFont) {
@@ -13,13 +13,12 @@ class PdfAppendixHelper {
 
     return [
       pw.Text("Appendix: Methodology & Formulas", style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-      pw.SizedBox(height: 8),
-      // 🚀 核心修正 2：明確定義歸屬日期邏輯，讓醫師了解數據對齊基準
+      pw.SizedBox(height: 4),
       pw.Text("針對 $scaleName 臨床報告所使用的數據計算方法。所有數據點均依「病程歸屬日 (Target Date)」進行時間序列對齊。",
           style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey800)),
-      pw.SizedBox(height: 24),
+      pw.SizedBox(height: 12),
 
-      // 1. 閾值配置
+      // 1. 閾值配置 (保持不變)
       _buildBox("Threshold Configuration", [
         _row("Rapid Increase Threshold", "${config.rapidIncreaseThreshold} pts"),
         _row("Consecutive Streak", "${config.streakThreshold} records"),
@@ -27,30 +26,37 @@ class PdfAppendixHelper {
         if (type == ScaleType.poem) _row("重度病灶切點 (POEM Severity)", ">= 17 pts"),
         if (type == ScaleType.uas7) _row("嚴重活性切點 (UAS7 Severity)", ">= 28 pts"),
       ]),
-      pw.SizedBox(height: 24),
+      pw.SizedBox(height: 12),
 
-      // 🚀 核心修正 3：傳遞 mathFont 以確保特殊符號 (β, Σ, x̄) 不會變成亂碼方塊
+      // 🚀 修正序號 1：變化幅度 (這是 ExportService 報告中呈現的第一個指標)
       _buildFormulaSection(
-          title: "1. Score Trend (Linear Regression)",
-          // 🚀 將 x̄ 和 ȳ 改為標準變數表示法，避免組合字元亂碼
+          title: "1. Magnitude of Change (二分法平均比較)",
+          formula: "Delta (Δ) = Average(Post-period) - Average(Pre-period)",
+          description: "將選定觀察區間數據平分為前後兩段，計算後期相較於前期的平均分差。負值代表整體改善，正值代表病況轉差。",
+          mathFont: mathFont
+      ),
+
+      // 🚀 修正序號 2：線性回歸
+      _buildFormulaSection(
+          title: "2. Score Trend (Linear Regression)",
           formula: "Slope (β) = Σ((xi - avg_x) * (yi - avg_y)) / Σ(xi - avg_x)²",
-          description: "使用最小平方法計算 Slope。x 代表病程天數 (歸屬日)，y 代表量表得分。負值代表病情趨於穩定，正值則代表趨向惡化。",
+          description: "使用最小平方法計算每日分數變化的斜率。負值代表趨於穩定 (Improving)，正值代表趨向惡化 (Worsening)。",
           mathFont: mathFont
       ),
 
-      // 3. 變異係數 (CV%)
+      // 🚀 修正序號 3：CV%
       _buildFormulaSection(
-          title: "2. Score Variability (CV%)",
+          title: "3. Score Variability (CV%)",
           formula: "CV% = (StdDev / Mean) * 100",
-          description: "衡量病情波動程度。百分比越低代表疾病控制越穩定，較不受評分絕對值高低的影響。",
+          description: "衡量病情波動程度。百分比越高代表症狀起伏越大，可能受環境誘發因子影響較深。",
           mathFont: mathFont
       ),
 
-      // 4. 急性發作定義 (使用 Δ 符號)
+      // 🚀 修正序號 4：Flare 偵測
       _buildFormulaSection(
-          title: "3. Flare Detection (Rapid & Streak)",
-          formula: "Flare Alert if: (ΔScore >= ${config.rapidIncreaseThreshold}) OR (Consecutive Increase >= ${config.streakTotalIncrease})",
-          description: "用於捕捉急性發作。包含單次爆發性增幅與持續性的惡化走勢監測。",
+          title: "4. Flare Detection (Rapid & Streak)",
+          formula: "Flare Alert if: (ΔScore >= ${config.rapidIncreaseThreshold}) OR (Accumulated Streak Increase >= ${config.streakTotalIncrease})",
+          description: "用於捕捉臨床急性發作。包含單日爆發性增幅 (Rapid) 與多日連續惡化走勢 (Streak) 的雙重監測。",
           mathFont: mathFont
       ),
 
@@ -80,12 +86,12 @@ class PdfAppendixHelper {
     required String description,
     required pw.Font mathFont,
   }) {
-    return pw.Container(margin: const pw.EdgeInsets.only(bottom: 20), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+    return pw.Container(margin: const pw.EdgeInsets.only(bottom: 4), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
       pw.Text(title, style: pw.TextStyle(fontSize: _fsHeader, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
-      pw.SizedBox(height: 6),
+      pw.SizedBox(height: 4),
       pw.Container(
           width: double.infinity,
-          padding: const pw.EdgeInsets.all(10),
+          padding: const pw.EdgeInsets.all(6),
           decoration: const pw.BoxDecoration(color: PdfColors.grey100),
           child: pw.Text(
               formula,
@@ -97,7 +103,7 @@ class PdfAppendixHelper {
               )
           )
       ),
-      pw.SizedBox(height: 8),
+      pw.SizedBox(height: 4),
       pw.Text(description, style: const pw.TextStyle(fontSize: _fsSmall, color: PdfColors.grey900))
     ]));
   }

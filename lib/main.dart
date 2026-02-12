@@ -10,6 +10,7 @@ import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/consent_screen.dart';
 import 'screens/login_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // 🚀 補上
 
 // ✅ 全域實例
 final isarService = IsarService();
@@ -30,6 +31,55 @@ void main() async {
   bootstrapController.start();
 
   runApp(const MyApp());
+}
+
+bool _isSyncingGlobal = false; // 全域旗標
+// 🚀 新增：全域同步方法，供 AuthGate 或各個 Screen 調用
+// 這裡直接複用你之前寫在 SurveyScreen 裡的邏輯，但放在全域更方便
+Future<void> globalSyncTask() async {
+  if (_isSyncingGlobal) return; // 如果正在跑，就不要重複進來
+  _isSyncingGlobal = true;
+
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+
+  try {
+    // 1. 抓取所有未同步資料
+    final unsynced = await isarService.getUnsyncedRecords(user.uid);
+    if (unsynced.isEmpty) return;
+
+    debugPrint("🚀 [啟動同步] 發現 ${unsynced.length} 筆未備份資料，開始自動補傳...");
+
+    // 2. 按月份打包 (JSON 打包法)
+    Map<String, List<dynamic>> groupedData = {};
+    Map<String, List<int>> groupedIds = {};
+
+    for (var rec in unsynced) {
+      String monthKey = "${rec.targetDate?.year}_${rec.targetDate?.month.toString().padLeft(2, '0')}";
+      groupedData.putIfAbsent(monthKey, () => []).add(rec.toFirestore());
+      groupedIds.putIfAbsent(monthKey, () => []).add(rec.id);
+    }
+
+    // 3. 執行 Firestore 寫入
+    for (var monthKey in groupedData.keys) {
+      final docRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('monthly_data')
+          .doc(monthKey);
+
+      await docRef.set({
+        'records': FieldValue.arrayUnion(groupedData[monthKey]!),
+        'lastUpdate': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // 4. 更新本地標記
+      await isarService.markAsSynced(groupedIds[monthKey]!);
+    }
+    debugPrint("✅ [啟動同步] 自動補漏完成");
+  } catch (e) {
+    debugPrint("❌ [啟動同步] 失敗: $e");
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -118,6 +168,10 @@ class AuthGate extends StatelessWidget {
 
         // 如果有資料，代表已登入
         if (snapshot.hasData) {
+          // 🚀 核心優化：當檢測到已登入，立即在背景啟動一次「補漏同步」
+          // 這會處理那些上次因為未達 2 筆而沒上傳的資料
+          globalSyncTask();
+
           return const HomeScreen();
         }
         // 否則，導向登入頁面

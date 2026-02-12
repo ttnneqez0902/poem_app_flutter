@@ -47,45 +47,50 @@ const PoemRecordSchema = CollectionSchema(
       name: r'imagePath',
       type: IsarType.string,
     ),
-    r'scaleType': PropertySchema(
+    r'isSynced': PropertySchema(
       id: 6,
+      name: r'isSynced',
+      type: IsarType.bool,
+    ),
+    r'scaleType': PropertySchema(
+      id: 7,
       name: r'scaleType',
       type: IsarType.byte,
       enumMap: _PoemRecordscaleTypeEnumValueMap,
     ),
     r'score': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'score',
       type: IsarType.long,
     ),
     r'severityLabel': PropertySchema(
-      id: 8,
+      id: 9,
       name: r'severityLabel',
       type: IsarType.string,
     ),
     r'targetDate': PropertySchema(
-      id: 9,
+      id: 10,
       name: r'targetDate',
       type: IsarType.dateTime,
     ),
     r'totalScore': PropertySchema(
-      id: 10,
+      id: 11,
       name: r'totalScore',
       type: IsarType.long,
     ),
     r'type': PropertySchema(
-      id: 11,
+      id: 12,
       name: r'type',
       type: IsarType.byte,
       enumMap: _PoemRecordtypeEnumValueMap,
     ),
     r'userId': PropertySchema(
-      id: 12,
+      id: 13,
       name: r'userId',
       type: IsarType.string,
     ),
     r'whealsCount': PropertySchema(
-      id: 13,
+      id: 14,
       name: r'whealsCount',
       type: IsarType.long,
     )
@@ -130,6 +135,19 @@ const PoemRecordSchema = CollectionSchema(
       properties: [
         IndexPropertySchema(
           name: r'targetDate',
+          type: IndexType.value,
+          caseSensitive: false,
+        )
+      ],
+    ),
+    r'isSynced': IndexSchema(
+      id: -39763503327887510,
+      name: r'isSynced',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'isSynced',
           type: IndexType.value,
           caseSensitive: false,
         )
@@ -197,14 +215,15 @@ void _poemRecordSerialize(
   writer.writeDateTime(offsets[3], object.date);
   writer.writeBool(offsets[4], object.imageConsent);
   writer.writeString(offsets[5], object.imagePath);
-  writer.writeByte(offsets[6], object.scaleType.index);
-  writer.writeLong(offsets[7], object.score);
-  writer.writeString(offsets[8], object.severityLabel);
-  writer.writeDateTime(offsets[9], object.targetDate);
-  writer.writeLong(offsets[10], object.totalScore);
-  writer.writeByte(offsets[11], object.type.index);
-  writer.writeString(offsets[12], object.userId);
-  writer.writeLong(offsets[13], object.whealsCount);
+  writer.writeBool(offsets[6], object.isSynced);
+  writer.writeByte(offsets[7], object.scaleType.index);
+  writer.writeLong(offsets[8], object.score);
+  writer.writeString(offsets[9], object.severityLabel);
+  writer.writeDateTime(offsets[10], object.targetDate);
+  writer.writeLong(offsets[11], object.totalScore);
+  writer.writeByte(offsets[12], object.type.index);
+  writer.writeString(offsets[13], object.userId);
+  writer.writeLong(offsets[14], object.whealsCount);
 }
 
 PoemRecord _poemRecordDeserialize(
@@ -221,16 +240,17 @@ PoemRecord _poemRecordDeserialize(
   object.id = id;
   object.imageConsent = reader.readBoolOrNull(offsets[4]);
   object.imagePath = reader.readStringOrNull(offsets[5]);
+  object.isSynced = reader.readBool(offsets[6]);
   object.scaleType =
-      _PoemRecordscaleTypeValueEnumMap[reader.readByteOrNull(offsets[6])] ??
+      _PoemRecordscaleTypeValueEnumMap[reader.readByteOrNull(offsets[7])] ??
           ScaleType.poem;
-  object.score = reader.readLongOrNull(offsets[7]);
-  object.targetDate = reader.readDateTimeOrNull(offsets[9]);
+  object.score = reader.readLongOrNull(offsets[8]);
+  object.targetDate = reader.readDateTimeOrNull(offsets[10]);
   object.type =
-      _PoemRecordtypeValueEnumMap[reader.readByteOrNull(offsets[11])] ??
+      _PoemRecordtypeValueEnumMap[reader.readByteOrNull(offsets[12])] ??
           RecordType.daily;
-  object.userId = reader.readStringOrNull(offsets[12]);
-  object.whealsCount = reader.readLongOrNull(offsets[13]);
+  object.userId = reader.readStringOrNull(offsets[13]);
+  object.whealsCount = reader.readLongOrNull(offsets[14]);
   return object;
 }
 
@@ -254,22 +274,24 @@ P _poemRecordDeserializeProp<P>(
     case 5:
       return (reader.readStringOrNull(offset)) as P;
     case 6:
+      return (reader.readBool(offset)) as P;
+    case 7:
       return (_PoemRecordscaleTypeValueEnumMap[reader.readByteOrNull(offset)] ??
           ScaleType.poem) as P;
-    case 7:
-      return (reader.readLongOrNull(offset)) as P;
     case 8:
-      return (reader.readString(offset)) as P;
+      return (reader.readLongOrNull(offset)) as P;
     case 9:
-      return (reader.readDateTimeOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 10:
-      return (reader.readLong(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 11:
+      return (reader.readLong(offset)) as P;
+    case 12:
       return (_PoemRecordtypeValueEnumMap[reader.readByteOrNull(offset)] ??
           RecordType.daily) as P;
-    case 12:
-      return (reader.readStringOrNull(offset)) as P;
     case 13:
+      return (reader.readStringOrNull(offset)) as P;
+    case 14:
       return (reader.readLongOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -329,6 +351,14 @@ extension PoemRecordQueryWhereSort
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(
         const IndexWhereClause.any(indexName: r'targetDate'),
+      );
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhere> anyIsSynced() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        const IndexWhereClause.any(indexName: r'isSynced'),
       );
     });
   }
@@ -692,6 +722,51 @@ extension PoemRecordQueryWhere
         upper: [upperTargetDate],
         includeUpper: includeUpper,
       ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> isSyncedEqualTo(
+      bool isSynced) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'isSynced',
+        value: [isSynced],
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterWhereClause> isSyncedNotEqualTo(
+      bool isSynced) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'isSynced',
+              lower: [],
+              upper: [isSynced],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'isSynced',
+              lower: [isSynced],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'isSynced',
+              lower: [isSynced],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'isSynced',
+              lower: [],
+              upper: [isSynced],
+              includeUpper: false,
+            ));
+      }
     });
   }
 
@@ -1392,6 +1467,16 @@ extension PoemRecordQueryFilter
       return query.addFilterCondition(FilterCondition.greaterThan(
         property: r'imagePath',
         value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterFilterCondition> isSyncedEqualTo(
+      bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'isSynced',
+        value: value,
       ));
     });
   }
@@ -2127,6 +2212,18 @@ extension PoemRecordQuerySortBy
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByIsSynced() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isSynced', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByIsSyncedDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isSynced', Sort.desc);
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> sortByScaleType() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'scaleType', Sort.asc);
@@ -2298,6 +2395,18 @@ extension PoemRecordQuerySortThenBy
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByIsSynced() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isSynced', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByIsSyncedDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isSynced', Sort.desc);
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QAfterSortBy> thenByScaleType() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'scaleType', Sort.asc);
@@ -2434,6 +2543,12 @@ extension PoemRecordQueryWhereDistinct
     });
   }
 
+  QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByIsSynced() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'isSynced');
+    });
+  }
+
   QueryBuilder<PoemRecord, PoemRecord, QDistinct> distinctByScaleType() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'scaleType');
@@ -2527,6 +2642,12 @@ extension PoemRecordQueryProperty
   QueryBuilder<PoemRecord, String?, QQueryOperations> imagePathProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'imagePath');
+    });
+  }
+
+  QueryBuilder<PoemRecord, bool, QQueryOperations> isSyncedProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'isSynced');
     });
   }
 

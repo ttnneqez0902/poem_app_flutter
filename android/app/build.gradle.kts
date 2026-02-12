@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("com.google.gms.google-services")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -12,7 +13,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-        // 核心修正：開啟脫糖支援
         isCoreLibraryDesugaringEnabled = true
     }
 
@@ -22,17 +22,20 @@ android {
 
     defaultConfig {
         applicationId = "com.example.eczema_self_assessment"
-        minSdk = flutter.minSdkVersion
+
+        // 🚀 修正：為了解決 LINE SDK 限制，設為 24
+        minSdk = 24
+
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // 開啟多索引支援
         multiDexEnabled = true
     }
 
     buildTypes {
-        release {
+        getByName("release") {
+            // 如果你有正式的簽署金鑰再修改這裡，目前先跟 debug 一致
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -42,7 +45,6 @@ flutter {
     source = "../.."
 }
 
-// --- 關鍵修正：dependencies 必須放在 android 區塊外面 ---
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

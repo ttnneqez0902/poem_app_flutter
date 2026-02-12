@@ -8,6 +8,9 @@ import '../widgets/uas7_tracker_card.dart';
 import '../widgets/weekly_tracker_card.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,7 +40,17 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _checkUserStatus(); // 檢查登入狀態
     _loadSettings(); // 初始化時載入設定
+  }
+
+  void _checkUserStatus() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      debugPrint("當前為訪客模式");
+    } else {
+      debugPrint("登入使用者: ${user.email}");
+    }
   }
 
   // 載入護理師設定
@@ -87,11 +100,70 @@ class _HomeScreenState extends State<HomeScreen> {
     };
   }
 
+  // 🚀 執行登出邏輯
+  Future<void> _handleLogout(BuildContext context) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("確認登出"),
+        content: const Text("您確定要登出系統嗎？"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("登出", style: TextStyle(color: Colors.red))
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await FirebaseAuth.instance.signOut();
+      await GoogleSignIn().signOut(); // 確保 Google 帳號也一併登出，下次可切換帳號
+      // 由於我們在 main.dart 有 AuthGate，Firebase 會自動偵測狀態並跳回登入頁
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // 1. 獲取當前登入的使用者資訊
+    final user = FirebaseAuth.instance.currentUser;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("皮膚健康管理", style: TextStyle(fontWeight: FontWeight.bold)),
+        // 🚀 將 leading 換成大頭貼按鈕
+        leadingWidth: 70,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 18, top: 6, bottom: 6),
+          child: InkWell(
+            onTap: () => _handleLogout(context), // 點擊大頭貼觸發登出
+            borderRadius: BorderRadius.circular(25),
+            child: CircleAvatar(
+              // 🚀 核心修正 3：加大半徑 (從預設約 20 增加到 25+)
+              radius: 25,
+              backgroundColor: Colors.blue.shade100,
+              backgroundImage: user?.photoURL != null
+                  ? NetworkImage(user!.photoURL!)
+                  : null,
+              child: user?.photoURL == null
+                  ? Text(
+                user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+              )
+                  : null,
+            ),
+          ),
+        ),
+        title: Column(
+          children: [
+            const Text("皮膚健康管理", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            if (user != null)
+              Text(
+                user.email ?? "",
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal, color: Colors.grey),
+              ),
+          ],
+        ),
         centerTitle: true,
         actions: [
           IconButton(

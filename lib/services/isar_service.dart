@@ -1,5 +1,7 @@
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 🚀 新增：處理登入狀態
+import 'package:cloud_firestore/cloud_firestore.dart'; // 🚀 確保這行不報紅
 import '../models/poem_record.dart';
 
 class IsarService {
@@ -20,13 +22,12 @@ class IsarService {
     return Isar.getInstance()!;
   }
 
-  // 🚀 核心新增：獲取特定日期範圍內的紀錄
-  // 用於 HomeScreen 計算 UAS7 七日進度
+  // 🚀 核心修正 1：查詢範圍統一改用 targetDate (歸屬日期)
   Future<List<PoemRecord>> getRecordsInRange(DateTime start, DateTime end) async {
     final isar = await db;
     return await isar.poemRecords
         .filter()
-        .dateBetween(start, end)
+        .targetDateBetween(start, end) // 改用歸屬日，統計才精確
         .findAll();
   }
 
@@ -36,11 +37,38 @@ class IsarService {
     return await isar.poemRecords.where().findAll();
   }
 
-  // 儲存新紀錄
+  // 🚀 核心修正 2：儲存紀錄時自動標記 UID 並同步雲端
   Future<void> saveRecord(PoemRecord record) async {
     final isar = await db;
+    final user = FirebaseAuth.instance.currentUser;
+
+    // 自動標記當前使用者 ID
+    if (user != null) {
+      record.userId = user.uid;
+    }
+
+    // 本地儲存
     await isar.writeTxn(() async {
       await isar.poemRecords.put(record);
+    });
+
+    // 🚀 同步至雲端 Firestore
+    if (user != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('records')
+            .add(record.toFirestore());
+      } catch (e) {
+        print("雲端備份失敗，但本地已儲存: $e");
+      }
+    }
+  }
+
+  // 🚀 核心新增 3：批次儲存 (用於登入後從雲端下載資料)
+  Future<void> saveAllRecords(List<PoemRecord> records) async {
+    final isar = await db;
+    await isar.writeTxn(() async {
+      await isar.poemRecords.putAll(records);
     });
   }
 
@@ -50,10 +78,10 @@ class IsarService {
     await isar.writeTxn(() async {
       await isar.poemRecords.delete(id);
     });
+    // 💡 註：雲端同步刪除建議透過 cloudDocId 進行，此處先維持基礎本地刪除
   }
 
-  // 🚀 核心新增：更新照片授權狀態
-  // 讓使用者能在歷史紀錄中隨時撤回報告顯示權限
+  // 更新照片授權狀態
   Future<void> updateImageConsent(Id id, bool consent) async {
     final isar = await db;
     await isar.writeTxn(() async {
@@ -65,7 +93,7 @@ class IsarService {
     });
   }
 
-  // 根據日期與類型查詢（備用）
+  // 🚀 核心修正 4：根據歸屬日與類型查詢
   Future<List<PoemRecord>> getRecordsByDateAndType(DateTime date, ScaleType type) async {
     final isar = await db;
     final startOfDay = DateTime(date.year, date.month, date.day);
@@ -74,7 +102,7 @@ class IsarService {
     return await isar.poemRecords
         .filter()
         .scaleTypeEqualTo(type)
-        .dateBetween(startOfDay, endOfDay)
+        .targetDateBetween(startOfDay, endOfDay) // 關鍵：對齊歸屬日
         .findAll();
   }
 }

@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "65146427281",
+    "project_id": "eczema-self-assessment",
+    "storage_bucket": "eczema-self-assessment.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:65146427281:android:5ff2167877ca52d36bec30",
+        "android_client_info": {
+          "package_name": "com.example.eczema_self_assessment"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "65146427281-65qptfv240t4s1fblqrkt4epkn6r8m51.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.eczema_self_assessment",
+            "certificate_hash": "40bfb9c56495642a8e4508bec0cb5d053eae55dc"
+          }
+        },
+        {
+          "client_id": "65146427281-1c4mfpu3140f2u7rglvvk21ooeg1n1cc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgRb1trZMgERs4o3-EHqCeNZZPqKcTazg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "65146427281-1c4mfpu3140f2u7rglvvk21ooeg1n1cc.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "65146427281-jfvn2hh6ieqti07ho74qled2lrb2gm2o.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.eczemaSelfAssessment"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

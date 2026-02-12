@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>65146427281-lu0jaqgfp7t4t31cnamnn8vpu88uft67.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.65146427281-lu0jaqgfp7t4t31cnamnn8vpu88uft67</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>65146427281-65qptfv240t4s1fblqrkt4epkn6r8m51.apps.googleusercontent.com</string>
+	<key>API_KEY</key>
+	<string>AIzaSyCYGfxVKRhs_ILUubvJKlyN-he3W-xYj_c</string>
+	<key>GCM_SENDER_ID</key>
+	<string>65146427281</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.charlie.eczemaSelfAssessment2026</string>
+	<key>PROJECT_ID</key>
+	<string>eczema-self-assessment</string>
+	<key>STORAGE_BUCKET</key>
+	<string>eczema-self-assessment.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:65146427281:ios:debd144e6dff98136bec30</string>
+</dict>
+</plist>

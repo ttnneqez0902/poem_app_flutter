@@ -10,9 +10,10 @@ dependencies:
     sdk: flutter
   # 1. 介面與圖表
   cupertino_icons: ^1.0.8
-  fl_chart: ^0.70.0        # 核心：畫給醫生看的趨勢圖
-  google_fonts: ^6.2.1    # 提升 UI 質感
+  fl_chart: ^0.70.0
+  google_fonts: ^6.2.1
   image_picker: ^1.1.2
+
   # 2. 本地資料庫 (Isar)
   isar: ^3.1.0+1
   isar_flutter_libs: ^3.1.0+1
@@ -20,14 +21,24 @@ dependencies:
   flutter_local_notifications: ^20.0.0
   timezone: ^0.10.1
   shared_preferences: ^2.2.3
+
   # 3. 狀態管理與日期處理
   flutter_riverpod: ^2.5.1
   intl: ^0.19.0
 
-  # 4. 醫療報告導出
+  # 4. 醫療報告導出與雲端同步
   pdf: ^3.10.8
   printing: ^5.11.1
-  share_plus: ^7.2.2  # 新增分享套件
+  share_plus: ^7.2.2
+  # 🚀 修正：降級以符合您的 Dart 3.8 環境
+  font_awesome_flutter: ^10.7.0
+  firebase_auth: ^5.0.0
+  firebase_core: ^3.15.2
+  # 🚀 核心修正：補上之前漏掉的 Firestore
+  cloud_firestore: ^5.0.0
+  google_sign_in: ^6.2.1  # 🚀 確保是這個版本區間
+  sign_in_with_apple: ^7.0.1
+  flutter_line_sdk: ^2.6.2
 
 dev_dependencies:
   flutter_test:
@@ -35,7 +46,6 @@ dev_dependencies:
   isar_generator: ^3.1.0+1
   build_runner: ^2.4.9
 
-# --- 關鍵修正區塊：與 dependencies 平級 ---
 flutter:
   uses-material-design: true
   assets:
@@ -46,8 +56,6 @@ flutter:
     - family: NotoSansTC
       fonts:
         - asset: assets/fonts/NotoSansTC-Regular.ttf
-
-    # 建議把數學字型分開宣告 (雖然 App UI 可能用不到，但結構較清晰)
     - family: NotoSansMath
       fonts:
         - asset: assets/fonts/NotoSansMath-Regular.ttf

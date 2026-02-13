@@ -26,7 +26,7 @@ class BootstrapController {
     try {
       // 階段 1: 臨床資料庫 (含 8 秒 Watchdog)
       _update(BootStage.database, 0.2);
-      await isarService.db.timeout(
+      await isarService.openDB().timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw BootstrapError.databaseTimeout,
       );

@@ -129,16 +129,18 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                         _buildDateSquare(weekStartDate, isDone, isTodayWeek, canFill, color, record),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 32,
+                          height: 40,
                           child: Text(
                             isDone
-                                ? "${DateFormat('MM/dd').format(record.date!)}\n${DateFormat('HH:mm').format(record.date!)}"
-                                : (isTodayWeek ? "本週" : (canFill ? "補填" : "預計")),
+                                ? _getTimeString(record!, weekStartDate) // 🚀 這裡要改成調用你寫好的 _getTimeString
+                                : (isTodayWeek ? "本週" : (canFill ? "待補" : "預計")), // 建議將補填改成「待補」語氣較順
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 10,
-                                height: 1.2,
-                                color: isTodayWeek ? color : (isDone ? color : (canFill ? Colors.orange.shade800 : Colors.grey.shade600)),
+                                height: 1.1,
+                                color: isDone && (record.date!.difference(weekStartDate).inDays >= 7)
+                                    ? Colors.orange.shade800
+                                    : (isTodayWeek ? color : (isDone ? color : Colors.grey.shade600)),
                                 fontWeight: (isDone || isTodayWeek || canFill) ? FontWeight.bold : FontWeight.normal
                             ),
                           ),
@@ -175,18 +177,37 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     );
   }
 
+  // 建議在 _WeeklyTrackerCardState 內新增此方法或修改 Text 的邏輯
+  String _getTimeString(PoemRecord record, DateTime weekStartDate) {
+    final DateTime fillDate = record.date!; // 實際填寫時間
+    // 判斷填寫日是否不在那一週內 (或是與該週起始日不同天)
+    // 周量表通常是以該週起始日為準，若 fillDate 距離起始日超過 7 天，顯然是補填
+    final bool isLateFill = fillDate.difference(weekStartDate).inDays >= 7;
+
+    if (isLateFill) {
+      // 🚀 誠實提醒：這是補填的
+      return "補 ${DateFormat('M/d').format(fillDate)}\n${DateFormat('HH:mm').format(fillDate)}";
+    } else {
+      // 當週準時填寫
+      return DateFormat('HH:mm').format(fillDate);
+    }
+  }
+
+
   Widget _buildDateSquare(DateTime date, bool isDone, bool isToday, bool canFill, Color color, PoemRecord? record) {
     return InkWell(
       // WeeklyTrackerCard.dart 內的 _buildDateSquare
       onTap: () async {
         bool? needsRefresh;
         if (isDone) {
+          HapticFeedback.lightImpact(); // 編輯舊紀錄也給點反饋
           // 編輯模式
           needsRefresh = await Navigator.push<bool>( // 🚀 3. 指定返回型別為 bool
               context,
               MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: widget.type, oldRecord: record))
           );
         } else if (canFill || isToday) {
+          HapticFeedback.mediumImpact(); // 補填給稍微重一點的反饋
           // 補填模式
           HapticFeedback.lightImpact();
           needsRefresh = await Navigator.push<bool>( // 🚀 3. 指定返回型別為 bool
@@ -197,12 +218,8 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
 
         // 🚀 4. 關鍵刷新邏輯修正
         if (needsRefresh == true && mounted) {
-          // A. 觸發父層 HomeScreen 的重新抓取 (FutureBuilder 會重跑)
-          if (widget.onRefresh != null) {
-            widget.onRefresh!();
-          }
-          // B. 同時也刷新卡片自身狀態
-          setState(() {});
+          widget.onRefresh?.call(); // 通知首頁更新數據
+          setState(() {}); // 更新本地顯示
         }
       },
       borderRadius: BorderRadius.circular(10),

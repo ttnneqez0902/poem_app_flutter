@@ -13,6 +13,12 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io'; // 🚀 必須 import，用於處理 File
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:path/path.dart' as p; // 🚀 確保有 alias 'p'
+import 'package:path_provider/path_provider.dart'; // 用於 getApplicationDocumentsDirectory
+import '../services/cloud_backup_service.dart'; // 🚀 補上這行
+import '../widgets/backup_dialogs.dart';      // 🚀 補上這行
+import '../services/cloud_backup_service.dart'
+    show BackupException, BackupExceptionType;
 
 
 class HomeScreen extends StatefulWidget {
@@ -27,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   static const int _virtualInitialPage = 500;
   final int _virtualTotalCount = 1000;
   String? _localPhotoPath; // 用於存放本地圖片路徑
+  bool _isSyncing = false; // 控制讀取中狀態
 
   late final PageController _pageController = PageController(
     initialPage: _virtualInitialPage,
@@ -49,10 +56,33 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadLocalPhoto(); // 新增這行
   }
 
+  // 🚀 初始化 CloudBackupService
+  late final CloudBackupService cloudBackupService = CloudBackupService(
+    isar: isarService.isar,
+    isarFactory: () async => await isarService.openDB(), // 確保 openDB 會回傳 Isar 實例
+  );
+
   Future<void> _loadLocalPhoto() async {
     final prefs = await SharedPreferences.getInstance();
+    String? savedPath = prefs.getString('user_custom_photo');
+
+    if (savedPath != null) {
+      // 🚀 檢查檔案是否真的在，如果不在（路徑失效），試著從目前 App 目錄重新拼接
+      final file = File(savedPath);
+      if (!await file.exists()) {
+        final docDir = await getApplicationDocumentsDirectory();
+        final fileName = p.basename(savedPath); // 取得檔名
+        final newPath = p.join(docDir.path, fileName); // 拼接目前正確的路徑
+
+        if (await File(newPath).exists()) {
+          savedPath = newPath;
+          await prefs.setString('user_custom_photo', newPath); // 更新正確路徑
+        }
+      }
+    }
+
     setState(() {
-      _localPhotoPath = prefs.getString('user_custom_photo');
+      _localPhotoPath = savedPath;
     });
   }
 
@@ -196,177 +226,431 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("登出", style: TextStyle(color: Colors.red))
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("登出", style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
 
+
+
+    // 🚀 關鍵：這裡必須先處理 confirm 的邏輯，然後才關閉方法
     if (confirm == true) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('user_custom_photo');
       await FirebaseAuth.instance.signOut();
-      await GoogleSignIn().signOut(); // 確保 Google 帳號也一併登出，下次可切換帳號
-      // 由於我們在 main.dart 有 AuthGate，Firebase 會自動偵測狀態並跳回登入頁
+      await GoogleSignIn().signOut();
+
+      // 💡 小建議：登出後通常需要導向登入頁面
+      if (context.mounted) {
+        Navigator.of(context).pushReplacementNamed('/login');
+      }
     }
+  } // <--- 確保這一個大括號存在，否則後面的 build 方法會報錯
+
+// 🚀 1. 計算資料夾大小的方法
+  Future<int> _calculateDirectorySize(Directory dir) async {
+    int total = 0;
+    if (!await dir.exists()) return 0;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File) total += await entity.length();
+    }
+    return total;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // 1. 獲取當前登入的使用者資訊
-    final user = FirebaseAuth.instance.currentUser;
+// 🚀 2. 格式化顯示字串
+  String _formatBytes(int bytes) {
+    const kb = 1024;
+    const mb = kb * 1024;
+    if (bytes >= mb) return "${(bytes / mb).toStringAsFixed(1)} MB";
+    if (bytes >= kb) return "${(bytes / kb).toStringAsFixed(1)} KB";
+    return "$bytes B";
+  }
 
-    return Scaffold(
+    @override
+    Widget build(BuildContext context) {
+      // 1. 獲取當前登入的使用者資訊
+      final user = FirebaseAuth.instance.currentUser;
 
-      appBar: AppBar(
-        leadingWidth: 80,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
-          child: PhysicalModel(
-            color: Colors.transparent,
-            shape: BoxShape.circle,
-            elevation: 4,
-            shadowColor: Colors.black.withOpacity(0.4),
-            // 🚀 核心改動：使用 PopupMenuButton 讓選單在頭像旁跳出
-            child: PopupMenuButton<String>(
-              offset: const Offset(0, 56), // 調整彈出位置在頭像下方一點
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              onSelected: (value) {
-                if (value == 'photo') {
-                  _handleChangePhoto();
-                } else if (value == 'logout') {
-                  _handleLogout(context);
-                }
-              },
-              // 這是原本的頭像 UI
-              child: CircleAvatar(
-                radius: 30,
-                backgroundColor: Colors.white,
+      return Scaffold(
+
+        appBar: AppBar(
+          leadingWidth: 80,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
+            child: PhysicalModel(
+              color: Colors.transparent,
+              shape: BoxShape.circle,
+              elevation: 4,
+              shadowColor: Colors.black.withOpacity(0.4),
+              // 🚀 核心改動：使用 PopupMenuButton 讓選單在頭像旁跳出
+              child: PopupMenuButton<String>(
+                offset: const Offset(0, 56),
+                // 調整彈出位置在頭像下方一點
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+                onSelected: (value) async {
+                  if (!mounted) return;
+                  if (value == 'photo') {
+                    _handleChangePhoto();
+                    return;
+                  }
+
+                  if (value == 'sync') {
+                    // 🚀 防止重複點擊
+                    if (_isSyncing) return;
+
+                    // A. 計算預估大小
+                    final docDir = await getApplicationDocumentsDirectory();
+                    final dbFile = File(p.join(docDir.path, 'eczema_data.isar'));
+                    final photoDir = Directory(p.join(docDir.path, 'photos'));
+
+                    final int dbSize = await dbFile.exists() ? await dbFile.length() : 0;
+                    final int photoSize = await _calculateDirectorySize(photoDir);
+                    final int totalSize = dbSize + photoSize;
+
+                    // B. 顯示告知與確認對話框
+                    final bool confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text("雲端備份說明"),
+                        content: Text(
+                          "本功能將加密備份您的紀錄與照片至您個人的 Google Drive。\n\n"
+                              "✅ 開發者無法存取您的備份內容\n"
+                              "✅ 備份不會經過第三方伺服器\n"
+                              "📦 預估大小：${_formatBytes(totalSize)}\n\n"
+                              "建議在 Wi-Fi 環境下執行。確定開始？",
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text("取消"),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text("開始備份"),
+                          ),
+                        ],
+                      ),
+                    ) ?? false;
+
+                    if (!confirmed) return;
+
+                    // 🚀【新增】開始備份 → 鎖定狀態
+                    setState(() => _isSyncing = true);
+
+                    try {
+                      await BackupDialogs.showProcessingDialog(
+                        context: context,
+                        title: "正在同步至雲端",
+                        message: "正在上傳紀錄，請勿關閉 App...",
+                        action: () async {
+                          await cloudBackupService.performFullBackup(photoDir.path);
+
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setString(
+                            'last_backup_time',
+                            DateTime.now().toIso8601String(),
+                          );
+                        },
+                      );
+
+                      // ✅ 只有真正成功才顯示
+                      if (mounted) {
+                        await Future.delayed(const Duration(milliseconds: 150));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("雲端備份完成"),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+
+                    } catch (e) {
+                      String message = "雲端備份失敗，請稍後再試";
+
+                      if (e is BackupException) {
+                        switch (e.type) {
+                          case BackupExceptionType.network:
+                            message = "網路連線異常，請檢查網路後再試";
+                            break;
+                          case BackupExceptionType.permission:
+                            message = "Google Drive 權限異常，請重新登入";
+                            break;
+                          case BackupExceptionType.storage:
+                            message = "Google Drive 空間不足，請釋放空間後再試";
+                            break;
+                          case BackupExceptionType.unknown:
+                            message = "雲端備份失敗，請稍後再試";
+                            break;
+                        }
+                      }
+
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(message),
+                            backgroundColor: Colors.redAccent,
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() => _isSyncing = false);
+                      }
+                    }
+                    return;
+                  }
+
+                  if (value == 'restore') {
+                    final bool confirmed = await BackupDialogs.confirmRestore(context);
+                    if (!confirmed) return;
+
+                    await BackupDialogs.showProcessingDialog(
+                      context: context,
+                      title: "正在恢復數據",
+                      message: "正在從雲端載入您的紀錄與照片，完成後將自動更新...",
+                      action: () async {
+                        final docDir = await getApplicationDocumentsDirectory();
+                        final photoDir = p.join(docDir.path, 'photos');
+                        await cloudBackupService.performFullRestore(photoDir);
+                        if (mounted) setState(() {});
+                      },
+                    );
+                    return;
+                  }
+
+                  if (value == 'logout') {
+                    _handleLogout(context);
+                    return;
+                  }
+                },
+
+                // 這是原本的頭像 UI
                 child: CircleAvatar(
-                  radius: 27,
-                  backgroundColor: Colors.blue.shade100,
-                  backgroundImage: (_localPhotoPath != null && File(_localPhotoPath!).existsSync()
-                      ? FileImage(File(_localPhotoPath!))
-                      : (user?.photoURL != null
-                      ? NetworkImage(user!.photoURL!)
-                      : null)) as ImageProvider?,
-                  child: (_localPhotoPath == null && user?.photoURL == null)
-                      ? Text(
-                    user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-                  )
-                      : null,
+                  radius: 30,
+                  backgroundColor: Colors.white,
+                  child: CircleAvatar(
+                    radius: 27,
+                    backgroundColor: Colors.blue.shade100,
+                    backgroundImage: (_localPhotoPath != null &&
+                        File(_localPhotoPath!).existsSync()
+                        ? FileImage(File(_localPhotoPath!))
+                        : (user?.photoURL != null
+                        ? NetworkImage(user!.photoURL!)
+                        : null)) as ImageProvider?,
+                    child: (_localPhotoPath == null && user?.photoURL == null)
+                        ? Text(
+                      user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 20),
+                    )
+                        : null,
+                  ),
                 ),
+                // 🚀 定義彈出的選單內容
+                itemBuilder: (context) =>
+                [
+                  const PopupMenuItem(
+                    value: 'photo',
+                    child: Row(
+                      children: [
+                        Icon(Icons.photo_library_rounded, color: Colors.blue),
+                        SizedBox(width: 12),
+                        Text("更換頭像"),
+                      ],
+                    ),
+                  ),
+                  // 在 itemBuilder 的回傳清單中加入：
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'sync', // 🚀 確保這個 value 跟下方 onSelected 對應
+                    child: Row(
+                      children: [
+                        _isSyncing
+                            ? const SizedBox(width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.cloud_upload_outlined,
+                            color: Colors.green),
+                        const SizedBox(width: 12),
+                        const Text("同步至雲端"),
+                      ],
+                    ),
+                  ),
+                  // 在 PopupMenuButton 的 itemBuilder 內增加：
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'restore',
+                    child: Row(
+                      children: [
+                        Icon(Icons.cloud_download_outlined, color: Colors
+                            .orange),
+                        SizedBox(width: 12),
+                        Text("從雲端恢復數據"),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuDivider(), // 分割線
+                  const PopupMenuItem(
+                    value: 'logout',
+                    child: Row(
+                      children: [
+                        Icon(Icons.logout_rounded, color: Colors.redAccent),
+                        SizedBox(width: 12),
+                        Text("登出系統"),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              // 🚀 定義彈出的選單內容
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'photo',
-                  child: Row(
-                    children: [
-                      Icon(Icons.photo_library_rounded, color: Colors.blue),
-                      SizedBox(width: 12),
-                      Text("更換頭像"),
-                    ],
-                  ),
-                ),
-                const PopupMenuDivider(), // 分割線
-                const PopupMenuItem(
-                  value: 'logout',
-                  child: Row(
-                    children: [
-                      Icon(Icons.logout_rounded, color: Colors.redAccent),
-                      SizedBox(width: 12),
-                      Text("登出系統"),
-                    ],
-                  ),
-                ),
-              ],
             ),
           ),
-        ),
-        title: Column(
-          children: [
-            const Text("皮膚健康管理", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            if (user != null)
-              Text(
-                user.email ?? "",
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal, color: Colors.grey),
+          title: Column(
+            children: [
+              const Text("皮膚健康管理",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              if (user != null)
+                Text(
+                  user.email ?? "",
+                  style: const TextStyle(fontSize: 11,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.grey),
+                ),
+            ],
+          ),
+          centerTitle: true,
+          actions: [
+            IconButton(
+              // 🚀 管理模式下顯示儲存圖示，平常顯示設定圖示
+              icon: Icon(
+                _isManagementMode ? Icons.check_circle : Icons
+                    .settings_suggest_rounded,
+                color: _isManagementMode ? Colors.green : null,
+                size: 28,
               ),
-          ],
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            // 🚀 管理模式下顯示儲存圖示，平常顯示設定圖示
-            icon: Icon(
-              _isManagementMode ? Icons.check_circle : Icons.settings_suggest_rounded,
-              color: _isManagementMode ? Colors.green : null,
-              size: 28,
-            ),
-            onPressed: () {
-              // 🚀 如果目前是關閉狀態，準備進入模式時跳出提示
-              if (!_isManagementMode) {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar(); // 清除現有的 SnackBar
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text("已進入管理員模式：點選方塊可開啟/關閉檢測"),
-                    backgroundColor: Colors.blueAccent,
-                    duration: Duration(seconds: 3),
-                    behavior: SnackBarBehavior.floating, // 懸浮樣式，更現代
-                  ),
-                );
-              }
-
-              setState(() {
-                _isManagementMode = !_isManagementMode;
+              onPressed: () {
+                // 🚀 如果目前是關閉狀態，準備進入模式時跳出提示
                 if (!_isManagementMode) {
-                  // 🚀 關閉模式並儲存
-                  _saveSettings();
-
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger
+                      .of(context)
+                      .hideCurrentSnackBar(); // 清除現有的 SnackBar
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text("設定已儲存"),
-                      backgroundColor: Colors.green,
-                      duration: Duration(seconds: 1),
-                      behavior: SnackBarBehavior.floating,
+                      content: Text("已進入管理員模式：點選方塊可開啟/關閉檢測"),
+                      backgroundColor: Colors.blueAccent,
+                      duration: Duration(seconds: 3),
+                      behavior: SnackBarBehavior.floating, // 懸浮樣式，更現代
                     ),
                   );
                 }
-              });
-            },
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            const SizedBox(height: 16),
-            // 🚀 四個量表大方塊區域
-            _buildScaleGrid(context),
 
-            // 🚀 修正 1：縮小間隔，將 24 改為 12
-            const SizedBox(height: 0),
-            const Divider(thickness: 0.5, height: 1), // 讓線條更精緻
-            const SizedBox(height: 12),
+                setState(() {
+                  _isManagementMode = !_isManagementMode;
+                  if (!_isManagementMode) {
+                    // 🚀 關閉模式並儲存
+                    _saveSettings();
 
-            // 次要導覽按鈕 (趨勢圖、歷史紀錄)
-            _buildSecondaryNavigation(context),
-
-            // 🚀 修正 2：縮小按鈕與輪播標題間的距離，將 24 改為 16
-            const SizedBox(height: 16),
-            _buildSwiperHeader(),
-
-            // 下方的臨床進度輪播卡片
-            _buildProgressSwiper(),
-            const SizedBox(height: 40),
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("設定已儲存"),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 1),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                });
+              },
+            ),
+            const SizedBox(width: 8),
           ],
+        ),
+        body: SingleChildScrollView(
+          child: Column(
+            children: [
+              const SizedBox(height: 16),
+              // 🚀 四個量表大方塊區域
+              _buildScaleGrid(context),
+
+              // 🚀 修正 1：縮小間隔，將 24 改為 12
+              const SizedBox(height: 0),
+              const Divider(thickness: 0.5, height: 1), // 讓線條更精緻
+              const SizedBox(height: 12),
+
+              // 次要導覽按鈕 (趨勢圖、歷史紀錄)
+              _buildSecondaryNavigation(context),
+
+              // 🚀 修正 2：縮小按鈕與輪播標題間的距離，將 24 改為 16
+              const SizedBox(height: 16),
+              _buildSwiperHeader(),
+
+              // 下方的臨床進度輪播卡片
+              _buildProgressSwiper(),
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      );
+    }
+
+
+  Future<void> _handleManualBackup() async {
+    // 🚀 這裡改用我們新寫好的 Dialog 邏輯
+    await BackupDialogs.showProcessingDialog(
+      context: context,
+      title: "資料同步中",
+      message: "正在安全地備份您的所有健康紀錄...",
+      action: () async {
+        final docDir = await getApplicationDocumentsDirectory();
+        final photoDir = p.join(docDir.path, 'photos');
+
+        // 呼叫 Service 執行全系統備份
+        await cloudBackupService.performFullBackup(photoDir);
+
+        // 💡 備份成功後更新最後備份時間，用於「四週提醒」邏輯
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('last_backup_time', DateTime.now().toIso8601String());
+      },
+    );
+  }
+  // 在 HomeScreen 或某個啟動邏輯中檢查
+  Future<void> _checkBackupRequirement() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastBackupStr = prefs.getString('last_backup_time');
+
+    // 取得 Isar 中最近四周的紀錄數量 (假設每週至少填一筆)
+    final recentRecords = await isarService.getRecordsCountInLastDays(28);
+
+    if (lastBackupStr == null && recentRecords > 0) {
+      // 從未備份過且有資料，提醒
+      _showBackupHint();
+    } else if (lastBackupStr != null) {
+      final lastBackup = DateTime.parse(lastBackupStr);
+      final daysSinceBackup = DateTime.now().difference(lastBackup).inDays;
+
+      // 🚀 如果超過 28 天沒備份，且這段時間有新照片/紀錄
+      if (daysSinceBackup >= 28 && recentRecords > 0) {
+        _showBackupHint();
+      }
+    }
+  }
+
+  void _showBackupHint() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text("您已有四週的紀錄未備份，建議同步至雲端以防遺失。"),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: "立即同步",
+          onPressed: () => _handleManualBackup(), // 觸發你原本的備份邏輯
         ),
       ),
     );
   }
-
 
   // --- 說明彈窗實作 ---
   void _showManagementGuide() {
@@ -427,6 +711,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   // 這樣從資料庫撈出來的最新 uas7Status 才會反應在日曆上
                   setState(() {});
 
+                  // 🚀 這裡可以加上靜默檢查
+                  _checkAndSilentBackup();
+
                   // 第二步：稍微延遲，等待新的數據渲染完成後，再執行 PageView 的自動對齊動畫
                   Future.delayed(const Duration(milliseconds: 300), () {
                     if (mounted) {
@@ -445,6 +732,16 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+// 實作一個靜默備份方法
+    Future<void> _checkAndSilentBackup() async {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return; // 訪客不自動備份
+
+      // 判斷是否距離上次備份超過 3 天 (避免過於頻繁)
+      // ... 判斷邏輯 ...
+      // 如果符合條件，呼叫 cloudBackupService.performFullBackup(...) 但不顯示 Loading Dialog
+    }
 
   // --- 停用提示彈窗實作 ---
   void _showDisabledScaleNotice(String title, String sub) {

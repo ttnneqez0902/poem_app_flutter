@@ -120,15 +120,17 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
                         _buildDateSquare(date, isDone, isToday, isPastUnfinished, themeColor, record),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 32,
+                          height: 40,
                           child: Text(
                             isDone ? _getTimeString(date) : (isToday ? "今日" : (isPastUnfinished ? "補填" : "預計")),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 10,
-                                height: 1.2,
-                                color: isToday ? themeColor : (isDone ? themeColor : (isPastUnfinished ? Colors.orange.shade800 : Colors.grey.shade600)),
-                                fontWeight: (isDone || isToday || isPastUnfinished) ? FontWeight.bold : FontWeight.normal
+                                height: 1.1, // 調整行高讓兩行字靠攏一點
+                                color: isDone && !_isSameDay(_getRecordAtDate(date)?.date ?? date, date)
+                                    ? Colors.orange.shade700 // 🚀 補填顯示橘色字，提醒這是事後回憶的
+                                    : (isToday ? themeColor : Colors.grey.shade600),
+                                fontWeight: (isDone || isToday) ? FontWeight.bold : FontWeight.normal
                             ),
                           ),
                         ),
@@ -217,10 +219,25 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
 
   String _getTimeString(DateTime targetDate) {
     try {
-      // 🚀 關鍵修正：必須透過 targetDate 尋找，才能正確顯示補填當下的時間
-      final record = widget.history.firstWhere((r) => _isSameDay(r.targetDate ?? r.date!, targetDate));
-      return "${DateFormat('MM/dd').format(record.date!)}\n${DateFormat('HH:mm').format(record.date!)}";
-    } catch (_) { return "已完成"; }
+      // 找出該格對應的紀錄
+      final record = widget.history.firstWhere(
+              (r) => _isSameDay(r.targetDate ?? r.date!, targetDate)
+      );
+
+      final DateTime fillDate = record.date!; // 實際按下儲存的時間
+      final bool isLateFill = !_isSameDay(fillDate, targetDate); // 是否為事後補填
+
+      if (isLateFill) {
+        // 🚀 補填模式：顯示 "補 2/13" 或是 "2/13 補"
+        // 這樣使用者一看就知道：這是紀錄 2/10 的狀況，但我是 2/13 才補寫的
+        return "補 ${DateFormat('M/d').format(fillDate)}\n${DateFormat('HH:mm').format(fillDate)}";
+      } else {
+        // 正常當天填寫：僅顯示時間即可
+        return DateFormat('HH:mm').format(fillDate);
+      }
+    } catch (_) {
+      return "已完成";
+    }
   }
 
   bool _checkIfTodayDone() {

@@ -8,37 +8,35 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # 1. 介面與圖表
   cupertino_icons: ^1.0.8
   fl_chart: ^0.70.0
   google_fonts: ^6.2.1
   image_picker: ^1.1.2
 
-  # 2. 本地資料庫 (Isar)
   isar: ^3.1.0+1
   isar_flutter_libs: ^3.1.0+1
   path_provider: ^2.1.2
   flutter_local_notifications: ^20.0.0
   timezone: ^0.10.1
-  shared_preferences: ^2.2.3
+  shared_preferences: ^2.5.3 # 🚀 稍微更新到與系統一致
 
-  # 3. 狀態管理與日期處理
   flutter_riverpod: ^2.5.1
   intl: ^0.19.0
 
-  # 4. 醫療報告導出與雲端同步
   pdf: ^3.10.8
   printing: ^5.11.1
-  share_plus: ^7.2.2
-  # 🚀 修正：降級以符合您的 Dart 3.8 環境
+  share_plus: ^10.0.0 # 🚀 建議用新版以支援最新的 Android 分享機制
   font_awesome_flutter: ^10.7.0
-  firebase_auth: ^5.0.0
+
+  # 🚀 建議這樣寫，讓 Firebase 內部版本自動協調
   firebase_core: ^3.15.2
-  # 🚀 核心修正：補上之前漏掉的 Firestore
-  cloud_firestore: ^5.0.0
-  google_sign_in: ^6.2.1  # 🚀 確保是這個版本區間
+  firebase_auth: ^5.4.0
+  cloud_firestore: ^5.6.0
+
+  google_sign_in: ^6.2.1
   sign_in_with_apple: ^7.0.1
   flutter_line_sdk: ^2.6.2
+  image_cropper: ^11.0.0
 
 dev_dependencies:
   flutter_test:
@@ -50,12 +48,19 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/images/  # 如果你有放照片
     - assets/fonts/
 
   fonts:
     - family: NotoSansTC
       fonts:
         - asset: assets/fonts/NotoSansTC-Regular.ttf
+        - asset: assets/fonts/NotoSansTC-Bold.ttf
+
     - family: NotoSansMath
       fonts:
         - asset: assets/fonts/NotoSansMath-Regular.ttf
+
+    - family: NotoEmoji  # 🚀 新增 Emoji 字體家族
+      fonts:
+        - asset: assets/fonts/NotoColorEmoji-Regular.ttf

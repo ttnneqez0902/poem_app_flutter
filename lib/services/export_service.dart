@@ -54,6 +54,20 @@ class ExportService {
   static const double _fsTitle = 20.0;
   static const double _fsLarge = 36.0;
 
+  // 🚀 優化 1：靜態變數緩存字體，避免重複加載佔用記憶體
+  static pw.Font? _cachedFontTC;
+  static pw.Font? _cachedBoldFontTC;
+  static pw.Font? _cachedMathFont;
+  static pw.Font? _cachedEmojiFont;
+
+  // 🚀 優化 2：私有方法負責加載資源（僅在第一次執行時加載）
+  static Future<void> _ensureResourcesLoaded() async {
+  _cachedFontTC ??= pw.Font.ttf(await rootBundle.load("assets/fonts/NotoSansTC-Regular.ttf"));
+  _cachedBoldFontTC ??= pw.Font.ttf(await rootBundle.load("assets/fonts/NotoSansTC-Bold.ttf"));
+  _cachedMathFont ??= pw.Font.ttf(await rootBundle.load("assets/fonts/NotoSansMath-Regular.ttf"));
+  _cachedEmojiFont ??= pw.Font.ttf(await rootBundle.load("assets/fonts/NotoColorEmoji-Regular.ttf"));
+  }
+
   // 補齊所有缺失的 Key
   static Map<String, String> _getLabels(bool isEn) => {
     'report_title': isEn ? "Clinical Data Report" : "臨床數據報告",
@@ -81,6 +95,7 @@ class ExportService {
     'note': isEn ? "Clinical Notes" : "臨床紀錄",
   };
 
+
   static Future<void> generateClinicalReport(
       List<PoemRecord> records,
       Uint8List? chartImageBytes,
@@ -88,123 +103,143 @@ class ExportService {
         ClinicalReportConfig config = const ClinicalReportConfig(),
         bool isEnglish = false,
       }) async {
+    // 🚀 整體包覆 try-catch，確保任何資源加載或渲染錯誤不會導致 App 閃退
+    try {
+      final labels = _getLabels(isEnglish);
+      final dateFmt = isEnglish ? 'MMM dd, yyyy' : 'yyyy/MM/dd';
 
-    final labels = _getLabels(isEnglish);
-    final dateFmt = isEnglish ? 'MMM dd, yyyy' : 'yyyy/MM/dd';
+      // 1. 數據清洗：過濾無效分數與日期，並按時間排序
+      final validRecords = records.where((r) =>
+      (r.targetDate ?? r.date) != null &&
+          r.scaleType == targetScale &&
+          r.score != null
+      ).toList();
 
-    // 1. 數據清洗
-    final validRecords = records.where((r) =>
-    (r.targetDate ?? r.date) != null &&
-        r.scaleType == targetScale &&
-        r.score != null
-    ).toList();
-    if (validRecords.isEmpty) return;
-    validRecords.sort((a, b) => (a.targetDate ?? a.date!).compareTo((b.targetDate ?? b.date!)));
+      if (validRecords.isEmpty) return;
 
-    final recentRecords = validRecords.where((r) => (r.targetDate ?? r.date!).isAfter(DateTime.now().subtract(const Duration(days: 28)))).toList();
+      validRecords.sort((a, b) =>
+          (a.targetDate ?? a.date!).compareTo((b.targetDate ?? b.date!)));
 
-    // 2. 臨床分析
-    final trend = _analyzeTrend(recentRecords.isEmpty ? validRecords : recentRecords, labels);
-    final alerts = _calculateAlerts(validRecords, config); // 改用 validRecords
+      // 取最近 28 天數據用於趨勢分析
+      final recentRecords = validRecords.where((r) =>
+          (r.targetDate ?? r.date!).isAfter(
+              DateTime.now().subtract(const Duration(days: 28)))
+      ).toList();
 
-    final cvText = recentRecords.length >= 3 ? "${_calculateCV(recentRecords).toStringAsFixed(1)}%" : labels['insufficient']!;
-    final weeklyStats = _buildWeeklyStats(validRecords);
+      // 2. 臨床分析運算
+      final trend = _analyzeTrend(recentRecords.isEmpty ? validRecords : recentRecords, labels);
+      final alerts = _calculateAlerts(validRecords, config);
+      final cvText = recentRecords.length >= 3
+          ? "${_calculateCV(recentRecords).toStringAsFixed(1)}%"
+          : labels['insufficient']!;
+      final weeklyStats = _buildWeeklyStats(validRecords);
 
-    // 3. 資源加載
-    final fontTC = await PdfGoogleFonts.notoSansTCRegular();
-    final boldFontTC = await PdfGoogleFonts.notoSansTCBold();
-    final mathFont = pw.Font.ttf(await rootBundle.load("assets/fonts/NotoSansMath-Regular.ttf"));
-    final reportTheme = pw.ThemeData.withFont(base: fontTC, bold: boldFontTC, fontFallback: [mathFont]);
+      // 3. 資源加載：調用緩存機制，確保字體只加載一次且離線可用
+      await _ensureResourcesLoaded();
 
-    final pdf = pw.Document();
-    final scaleMeta = _getScaleMetadata(targetScale, isEnglish);
-    final photoCache = await _loadPhotoCache(validRecords);
+      // 建立 PDF 主題，配置字體回退機制 (Fallback) 處理數學符號與 Emoji
+      final reportTheme = pw.ThemeData.withFont(
+        base: _cachedFontTC!,
+        bold: _cachedBoldFontTC!,
+        fontFallback: [_cachedMathFont!, _cachedEmojiFont!],
+      );
 
-    // --- Page 1: 封面 ---
-    pdf.addPage(pw.Page(
-      pageFormat: PdfPageFormat.a4,
-      theme: reportTheme,
-      build: (_) => pw.Container(
-        padding: const pw.EdgeInsets.all(40),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            _buildHeaderTitle(scaleMeta['title']!, labels['report_title']!),
-            pw.Spacer(flex: 2),
-            pw.Text(scaleMeta['full_name']!, style: pw.TextStyle(fontSize: _fsLarge, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
-            pw.Divider(color: PdfColors.blue900, thickness: 2.5),
-            pw.SizedBox(height: 20),
-            _coverField(labels['anon_id']!, _generateAnonID(validRecords)),
-            _coverField(labels['obs_period']!, "${DateFormat(dateFmt).format(validRecords.first.targetDate ?? validRecords.first.date!)} - ${DateFormat(dateFmt).format(validRecords.last.targetDate ?? validRecords.last.date!)}"),
-            pw.Spacer(flex: 1),
-            _buildTrendSummary(targetScale, trend, cvText, alerts, config, recentRecords.length, labels, isEnglish),
-            pw.Spacer(flex: 3),
-            _buildDisclaimerBox(labels['clinical_alert']!, scaleMeta['disclaimer']!),
-          ],
-        ),
-      ),
-    ));
+      final pdf = pw.Document();
+      final scaleMeta = _getScaleMetadata(targetScale, isEnglish);
+      final photoCache = await _loadPhotoCache(validRecords);
 
-    // --- Page 2: 圖表與統計 ---
-    pdf.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.a4,
-      theme: reportTheme,
-      header: (context) => _buildPdfHeader(scaleMeta['title']!, context),
-      build: (context) => [
-        if (chartImageBytes != null) ...[
-          pw.Text(labels['visual_title']!, style: pw.TextStyle(fontSize: _fsTitle, fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 15),
-          pw.Center(child: pw.Image(pw.MemoryImage(chartImageBytes), width: 450)),
-          pw.SizedBox(height: 30),
-        ],
-        pw.Text(labels['weekly_summary']!, style: pw.TextStyle(fontSize: _fsTitle, fontWeight: pw.FontWeight.bold)),
-        pw.SizedBox(height: 15),
-        _buildWeeklyTable(weeklyStats, labels),
-      ],
-    ));
-
-    // --- Page 3+: 明細紀錄 ---
-    final reversedRecords = List<PoemRecord>.from(validRecords.reversed);
-    for (int i = 0; i < reversedRecords.length; i += 6) {
-      final chunk = reversedRecords.skip(i).take(6).toList();
+      // --- Page 1: 封面與核心趨勢摘要 ---
       pdf.addPage(pw.Page(
         pageFormat: PdfPageFormat.a4,
         theme: reportTheme,
-        build: (context) => pw.Column(children: [
-          _buildPdfHeader(scaleMeta['title']!, context),
-          _buildHistoryTable(chunk, photoCache, labels, dateFmt),
-        ]),
-      ));
-    }
-
-    // --- Appendix ---
-    pdf.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.a4,
-      theme: reportTheme,
-      // 🚀 如果需要頁首可以加上 header，否則保持 build 即可
-      header: (context) => _buildPdfHeader("${scaleMeta['title']} Appendix", context),
-      build: (context) => [
-        // 🚀 注意：MultiPage 的 build 必須回傳 List<pw.Widget>，
-        // 而 PdfAppendixHelper.buildAppendix 剛好就是回傳 List<pw.Widget>
-        ...PdfAppendixHelper.buildAppendix(targetScale, config, mathFont),
-
-        // 這裡可以移除原本的 Spacer()，改用 SizedBox 或 Padding
-        pw.SizedBox(height: 20),
-        pw.Divider(color: PdfColors.grey600),
-        pw.Align(
-          alignment: pw.Alignment.centerLeft,
-          child: pw.Text(
-              "End of Report | Total Sample N=${validRecords.length}",
-              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500)
+        build: (_) => pw.Container(
+          padding: const pw.EdgeInsets.all(40),
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              _buildHeaderTitle(scaleMeta['title']!, labels['report_title']!),
+              pw.Spacer(flex: 2),
+              pw.Text(scaleMeta['full_name']!,
+                  style: pw.TextStyle(fontSize: _fsLarge, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
+              pw.Divider(color: PdfColors.blue900, thickness: 2.5),
+              pw.SizedBox(height: 20),
+              _coverField(labels['anon_id']!, _generateAnonID(validRecords)),
+              _coverField(labels['obs_period']!,
+                  "${DateFormat(dateFmt).format(validRecords.first.targetDate ?? validRecords.first.date!)} - ${DateFormat(dateFmt).format(validRecords.last.targetDate ?? validRecords.last.date!)}"),
+              pw.Spacer(flex: 1),
+              _buildTrendSummary(targetScale, trend, cvText, alerts, config, recentRecords.length, labels, isEnglish),
+              pw.Spacer(flex: 3),
+              _buildDisclaimerBox(labels['clinical_alert']!, scaleMeta['disclaimer']!),
+            ],
           ),
         ),
-      ],
-    ));
+      ));
 
-    final bytes = await pdf.save();
-    final file = File('${(await getTemporaryDirectory()).path}/Report_${targetScale.name.toUpperCase()}.pdf');
-    await file.writeAsBytes(bytes);
-    await Share.shareXFiles([XFile(file.path)]);
+      // --- Page 2: 圖表趨勢視覺化與週期統計 ---
+      pdf.addPage(pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: reportTheme,
+        header: (context) => _buildPdfHeader(scaleMeta['title']!, context),
+        build: (context) => [
+          if (chartImageBytes != null) ...[
+            pw.Text(labels['visual_title']!, style: pw.TextStyle(fontSize: _fsTitle, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 15),
+            pw.Center(child: pw.Image(pw.MemoryImage(chartImageBytes), width: 450)),
+            pw.SizedBox(height: 30),
+          ],
+          pw.Text(labels['weekly_summary']!, style: pw.TextStyle(fontSize: _fsTitle, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 15),
+          _buildWeeklyTable(weeklyStats, labels),
+        ],
+      ));
+
+      // --- Page 3+: 歷史明細紀錄 (含臨床照片與筆記) ---
+      final reversedRecords = List<PoemRecord>.from(validRecords.reversed);
+      for (int i = 0; i < reversedRecords.length; i += 6) {
+        final chunk = reversedRecords.skip(i).take(6).toList();
+        pdf.addPage(pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          theme: reportTheme,
+          build: (context) => pw.Column(children: [
+            _buildPdfHeader(scaleMeta['title']!, context),
+            _buildHistoryTable(chunk, photoCache, labels, dateFmt),
+          ]),
+        ));
+      }
+
+      // --- Appendix: 運算邏輯、公式說明與免責聲明 ---
+      pdf.addPage(pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: reportTheme,
+        header: (context) => _buildPdfHeader("${scaleMeta['title']} Appendix", context),
+        build: (context) => [
+          // 使用專屬 Helper 建立附錄內容，傳入快取的數學字體以渲染公式符號
+          ...PdfAppendixHelper.buildAppendix(targetScale, config, _cachedMathFont!),
+          pw.SizedBox(height: 20),
+          pw.Divider(color: PdfColors.grey600),
+          pw.Align(
+            alignment: pw.Alignment.centerLeft,
+            child: pw.Text(
+                "End of Report | Total Sample Size N=${validRecords.length}",
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey500)
+            ),
+          ),
+        ],
+      ));
+
+      // 4. 生成二進制數據並啟動分享
+      final bytes = await pdf.save();
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}/Report_${targetScale.name.toUpperCase()}.pdf');
+
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles([XFile(file.path)]);
+
+    } catch (e) {
+      // 輸出錯誤日誌以便除錯 (例如資產路徑錯誤或圖片解碼失敗)
+      print("Clinical Report Export Error: $e");
+      rethrow; // 拋出錯誤讓 UI 層能捕捉並顯示 SnackBar
+    }
   }
 
   // --- 運算邏輯 ---

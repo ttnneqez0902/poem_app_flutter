@@ -6,27 +6,35 @@ plugins {
 }
 
 android {
+    // 建議使用目前的穩定 NDK 版本
     ndkVersion = "27.0.12077973"
     namespace = "com.example.eczema_self_assessment"
-    compileSdk = flutter.compileSdkVersion
+
+    // 🚀 修正 1：手動指定為 34 或 35 (image_cropper 11.x 需要較新的 SDK)
+    compileSdk = 35
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        // 🚀 修正 2：為了更好的相容性，建議升級到 Java 17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+        // 🚀 修正 3：對應 Java 版本
+        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
         applicationId = "com.example.eczema_self_assessment"
 
-        // 🚀 修正：為了解決 LINE SDK 限制，設為 24
+        // 🚀 修正 4：維持 24 (滿足 LINE SDK) 是對的，
+        // 但請確保 image_cropper 能跑，通常 minSdk 21 即可
         minSdk = 24
 
-        targetSdk = flutter.targetSdkVersion
+        // 🚀 修正 5：手動指定 targetSdk
+        targetSdk = 35
+
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
@@ -35,8 +43,10 @@ android {
 
     buildTypes {
         getByName("release") {
-            // 如果你有正式的簽署金鑰再修改這裡，目前先跟 debug 一致
             signingConfig = signingConfigs.getByName("debug")
+            // 建議加入混淆優化，但若開發中可先跳過
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
@@ -46,5 +56,6 @@ flutter {
 }
 
 dependencies {
+    // 🚀 修正 6：desugar 庫版本
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

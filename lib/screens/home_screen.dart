@@ -12,6 +12,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io'; // 🚀 必須 import，用於處理 File
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -54,30 +56,77 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 🚀 2. 實作挑選圖片邏輯
   Future<void> _handleChangePhoto() async {
     final ImagePicker picker = ImagePicker();
 
-    // 彈出選單讓使用者選相簿或相機
-    final XFile? pickedFile = await picker.pickImage(
-      source: ImageSource.gallery, // 預設開啟相簿
-      maxWidth: 500,  // 限制寬度節省記憶體
-      imageQuality: 80, // 稍微壓縮畫質
+    // 1. 選取來源
+    final ImageSource? source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('從相簿選擇'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('開啟相機'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+          ],
+        ),
+      ),
     );
 
-    if (pickedFile != null) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('user_custom_photo', pickedFile.path); // 儲存路徑
+    if (source == null) return;
 
+    // 2. 取得圖片
+    final XFile? pickedFile = await picker.pickImage(source: source);
+    if (pickedFile == null) return;
+
+    // 3. 🚀 執行裁剪 (11.0.0 語法)
+    final CroppedFile? croppedFile = await ImageCropper().cropImage(
+      sourcePath: pickedFile.path,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: '編輯大頭照',
+          toolbarColor: Colors.blue,
+          toolbarWidgetColor: Colors.white,
+
+          // 1. 設定為圓形遮罩
+          cropStyle: CropStyle.circle,
+
+          // 2. 隱藏中間的網格線 (消除方形感)
+          showCropGrid: false,
+
+          // 3. 隱藏裁剪框邊界 (讓它看起來更像純圓形)
+          // 如果你希望使用者還是能看到邊界，可以留著，但我建議關掉或調淡
+
+          // 4. 🚀 關鍵：隱藏下方所有的控制項 (那個 square 標籤會消失)
+          // 因為我們已經鎖定正方形比例了，不需要讓使用者切換，隱藏後介面會非常乾淨
+          hideBottomControls: true,
+
+          aspectRatioPresets: [CropAspectRatioPreset.square],
+          lockAspectRatio: true,
+          initAspectRatio: CropAspectRatioPreset.square,
+        ),
+        IOSUiSettings(
+          title: '編輯大頭照',
+          aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+        ),
+      ],
+    );
+
+    // 4. 更新狀態與儲存
+    if (croppedFile != null) {
       setState(() {
-        _localPhotoPath = pickedFile.path;
+        _localPhotoPath = croppedFile.path;
       });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("大頭貼已更新 (僅存於此裝置)")),
-        );
-      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_custom_photo', croppedFile.path);
     }
   }
 

@@ -19,6 +19,7 @@ dependencies:
   extension_google_sign_in_as_googleapis_auth: ^2.0.13
   http: ^1.1.0
   path_provider: ^2.1.2
+  icloud_storage: ^2.2.0
 
   # 修正這裡：使用最新的 plus 版本
   # icloud_storage_plus: ^1.0.0  # <--- 先加 # 字號註解掉

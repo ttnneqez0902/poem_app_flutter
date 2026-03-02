@@ -9,7 +9,7 @@ import '../widgets/weekly_tracker_card.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:google_sign_in/google_sign_in.dart'; // 🚀 必備
 import 'dart:io'; // 🚀 必須 import，用於處理 File
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -29,7 +29,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-
+  final String _appVersion = "1.0.0"; // 每次更新 App 時改這裡
   static const int _virtualInitialPage = 500;
   final int _virtualTotalCount = 1000;
   String? _localPhotoPath; // 用於存放本地圖片路徑
@@ -56,10 +56,18 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadLocalPhoto(); // 新增這行
   }
 
-  // 🚀 初始化 CloudBackupService
+// 🚀 1. 先宣告 GoogleSignIn 實例並設定權限範圍
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: [
+      'https://www.googleapis.com/auth/drive.appdata', // 必備：存取 App 專用雲端空間
+    ],
+  );
+
+// 2. 🚀 修正初始化代碼，傳入 provider
   late final CloudBackupService cloudBackupService = CloudBackupService(
     isar: isarService.isar,
-    isarFactory: () async => await isarService.openDB(), // 確保 openDB 會回傳 Isar 實例
+    isarFactory: () async => await isarService.openDB(),
+    googleSignIn: _googleSignIn, // ✅ 這裡改為 googleSignIn
   );
 
   Future<void> _loadLocalPhoto() async {
@@ -298,6 +306,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
 
                   if (value == 'sync') {
+                    // 🚀 額外檢查：如果沒登入，先導向登入或彈出提示
+                    if (FirebaseAuth.instance.currentUser == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("請先登入帳號再執行同步")),
+                      );
+                      return;
+                    }
                     // 🚀 防止重複點擊
                     if (_isSyncing) return;
 
@@ -346,7 +361,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         title: "正在同步至雲端",
                         message: "正在上傳紀錄，請勿關閉 App...",
                         action: () async {
-                          await cloudBackupService.performFullBackup(photoDir.path);
+                          // 修改呼叫處
+                          await cloudBackupService.runBackup(
+                              photoDir.path, // 🚀 加上 .path 轉為 String
+                              appVersion: _appVersion
+                          );
 
                           final prefs = await SharedPreferences.getInstance();
                           await prefs.setString(
@@ -376,13 +395,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             message = "網路連線異常，請檢查網路後再試";
                             break;
                           case BackupExceptionType.permission:
-                            message = "Google Drive 權限異常，請重新登入";
+                            message = "雲端權限異常，請重新登入";
                             break;
                           case BackupExceptionType.storage:
-                            message = "Google Drive 空間不足，請釋放空間後再試";
+                            message = "雲端空間不足，請釋放空間後再試";
+                            break;
+                          case BackupExceptionType.incomplete: // ✅ 補上這一個 case
+                            message = "備份資料不完整，無法執行還原";
                             break;
                           case BackupExceptionType.unknown:
-                            message = "雲端備份失敗，請稍後再試";
+                          default: // ✅ 加上 default 確保萬無一失
+                            message = "雲端服務失敗，請稍後再試";
                             break;
                         }
                       }
@@ -413,9 +436,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: "正在恢復數據",
                       message: "正在從雲端載入您的紀錄與照片，完成後將自動更新...",
                       action: () async {
+                        // 🚀 確保這裡拿到的是 Directory 物件，或者清楚它是 String
                         final docDir = await getApplicationDocumentsDirectory();
-                        final photoDir = p.join(docDir.path, 'photos');
-                        await cloudBackupService.performFullRestore(photoDir);
+                        final String photoPath = p.join(docDir.path, 'photos');
+
+                        // 直接傳入路徑字串
+                        await cloudBackupService.runRestore(photoPath);
+                        await cloudBackupService.runBackup(photoPath, appVersion: _appVersion);
+
                         if (mounted) setState(() {});
                       },
                     );
@@ -514,10 +542,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               if (user != null)
                 Text(
-                  user.email ?? "",
-                  style: const TextStyle(fontSize: 11,
-                      fontWeight: FontWeight.normal,
-                      color: Colors.grey),
+                  user.email ?? "雲端帳號已登入", // 🚀 顯示登入 Email 以利確認帳號
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
                 ),
             ],
           ),
@@ -606,10 +632,16 @@ class _HomeScreenState extends State<HomeScreen> {
       message: "正在安全地備份您的所有健康紀錄...",
       action: () async {
         final docDir = await getApplicationDocumentsDirectory();
-        final photoDir = p.join(docDir.path, 'photos');
+        // 🚀 我們統一使用 photoPath 這個名稱，它是一個 String
+        final String photoPath = p.join(docDir.path, 'photos');
 
         // 呼叫 Service 執行全系統備份
-        await cloudBackupService.performFullBackup(photoDir);
+        await cloudBackupService.runRestore(photoPath);
+
+        // 2. 執行還原後的「落地即備份」 (同樣直接傳入字串)
+        await cloudBackupService.runBackup(photoPath, appVersion: _appVersion);
+
+        if (mounted) setState(() {});
 
         // 💡 備份成功後更新最後備份時間，用於「四週提醒」邏輯
         final prefs = await SharedPreferences.getInstance();
@@ -733,15 +765,34 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-// 實作一個靜默備份方法
-    Future<void> _checkAndSilentBackup() async {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return; // 訪客不自動備份
+  Future<void> _checkAndSilentBackup() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
 
-      // 判斷是否距離上次備份超過 3 天 (避免過於頻繁)
-      // ... 判斷邏輯 ...
-      // 如果符合條件，呼叫 cloudBackupService.performFullBackup(...) 但不顯示 Loading Dialog
+    final prefs = await SharedPreferences.getInstance();
+    final lastSyncStr = prefs.getString('last_silent_backup');
+    final now = DateTime.now();
+
+    // 策略：每 28 天自動備份一次
+    if (lastSyncStr != null) {
+      final lastSync = DateTime.parse(lastSyncStr);
+      if (now.difference(lastSync).inDays < 28) return;
     }
+
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final String photoPath = p.join(docDir.path, 'photos'); // 🚀 定義字串
+
+      // 執行備份 (不顯示 Dialog)
+      await cloudBackupService.runRestore(photoPath);
+
+      // 紀錄成功時間
+      await prefs.setString('last_silent_backup', now.toIso8601String());
+      debugPrint("✅ 自動靜默備份完成");
+    } catch (e) {
+      debugPrint("❌ 自動備份失敗: $e"); // 靜默失敗，不打擾使用者
+    }
+  }
 
   // --- 停用提示彈窗實作 ---
   void _showDisabledScaleNotice(String title, String sub) {
@@ -895,7 +946,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return WeeklyTrackerCard(
           type: ScaleType.adct,
           history: data['adct'],
-          // onRefresh: onRefresh,
+          onRefresh: onRefresh,
         );
       case ScaleType.poem:
         return WeeklyTrackerCard(

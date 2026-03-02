@@ -155,25 +155,23 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     }
   }
 
-// 🚀 核心省錢邏輯：JSON 打包 + 批量同步
   Future<void> syncRecordsOptimized() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
     try {
-      // 1. 從 Isar 抓取「本使用者」且「尚未同步」的所有紀錄
-      // 使用 isarService 內部的實體，或直接使用你在 main 定義的 isar
+      // 1. 抓取未同步紀錄
       final unsyncedRecords = await isarService.getUnsyncedRecords(user.uid);
 
-      // 🚀 策略：積累達 2 筆才觸發一次寫入，極大幅度節省寫入次數
+      // 🚀 策略：積累達 2 筆才觸發一次寫入
       if (unsyncedRecords.length < 2) {
-        debugPrint("⏳ 未達 2 筆（目前 ${unsyncedRecords.length} 筆），暫存本地以節省雲端額度");
+        debugPrint("⏳ 未達門檻（目前 ${unsyncedRecords.length} 筆），暫存本地。");
         return;
       }
 
-      debugPrint("📦 達到同步門檻，開始打包上傳...");
+      debugPrint("📦 開始打包上傳...");
 
-      // 2. 按月份分組 (JSON 打包法的關鍵：一個月一個 Document)
+      // 2. 按月份分組
       Map<String, List<PoemRecord>> groupedByMonth = {};
       for (var rec in unsyncedRecords) {
         String monthKey = "${rec.targetDate?.year}_${rec.targetDate?.month.toString().padLeft(2, '0')}";
@@ -188,33 +186,35 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
             .collection('monthly_data')
             .doc(monthKey);
 
-        // 將該月份的多筆紀錄轉為 JSON List
         List<Map<String, dynamic>> newJsonData = groupedByMonth[monthKey]!
             .map((r) {
           var map = r.toFirestore();
-          // 🚀 強制確保 answers 是符合 Firestore 格式的 List
           if (map['answers'] != null) {
             map['answers'] = List<int>.from(map['answers']);
           }
           return map;
-        })
-            .toList();
+        }).toList();
 
-        // 🔥 使用 arrayUnion：將資料塞進 records 陣列，不覆蓋舊資料，且只算 1 次寫入
+        // 🔥 使用 set + arrayUnion：即使文件不存在也會建立，存在則追加陣列內容
         await docRef.set({
           'records': FieldValue.arrayUnion(newJsonData),
           'lastUpdate': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
 
-        // 4. 同步成功後，更新本地 Isar 狀態為已同步
-        for (var rec in groupedByMonth[monthKey]!) {
-          rec.isSynced = true;
-          await isarService.saveRecord(rec); // 更新標記
-        }
-        debugPrint("☁️ $monthKey 份資料打包同步成功！");
+        // 4. 更新本地狀態
+        // 這裡建議用 isar 的 writeTxn 批量更新，效能更好
+        await isarService.isar.writeTxn(() async {
+          for (var rec in groupedByMonth[monthKey]!) {
+            rec.isSynced = true;
+            await isarService.saveRecord(rec);
+          }
+        });
+        debugPrint("☁️ $monthKey 打包成功！");
       }
+    } on FirebaseException catch (e) {
+      debugPrint("Firebase 異常 (可能網路不穩): ${e.message}");
     } catch (e) {
-      debugPrint("❌ 同步過程中出錯 (可能離線): $e");
+      debugPrint("❌ 同步失敗: $e");
     }
   }
 

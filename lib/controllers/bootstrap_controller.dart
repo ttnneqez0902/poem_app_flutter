@@ -32,8 +32,13 @@ class BootstrapController {
       );
 
       // 階段 2: 通知服務 (確保 UAS7 每日提醒功能正常)
+      // 階段 2: 通知服務 (確保 UAS7 每日提醒功能正常)
       _update(BootStage.notification, 0.5);
-      await notificationService.init();
+      await notificationService.init(
+          onPayloadReceived: (payload) {
+            // 跳轉邏輯已經統一交給 main.dart 處理，這裡給個空函數即可
+          }
+      );
 
       // 階段 3: 法規同意權檢查
       _update(BootStage.finalizing, 0.8);

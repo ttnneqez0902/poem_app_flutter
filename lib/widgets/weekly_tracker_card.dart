@@ -7,13 +7,19 @@ import '../screens/poem_survey_screen.dart';
 class WeeklyTrackerCard extends StatefulWidget {
   final ScaleType type;
   final List<PoemRecord> history;
-  final VoidCallback? onRefresh; // 🚀 1. 新增刷新回調參數定義
+  final VoidCallback? onRefresh;
+
+  // 🚀 1. 新增接收外部傳入的時間字串與點擊事件
+  final String? reminderText;
+  final VoidCallback? onReminderTap;
 
   const WeeklyTrackerCard({
     super.key,
     required this.type,
     required this.history,
-    this.onRefresh, // 🚀 2. 將其加入建構子
+    this.onRefresh,
+    this.reminderText,   // 🚀 加入建構子
+    this.onReminderTap,  // 🚀 加入建構子
   });
 
   @override
@@ -132,8 +138,8 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                           height: 40,
                           child: Text(
                             isDone
-                                ? _getTimeString(record!, weekStartDate) // 🚀 這裡要改成調用你寫好的 _getTimeString
-                                : (isTodayWeek ? "本週" : (canFill ? "待補" : "預計")), // 建議將補填改成「待補」語氣較順
+                                ? _getTimeString(record!, weekStartDate)
+                                : (isTodayWeek ? "本週" : (canFill ? "待補" : "預計")),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 10,
@@ -165,7 +171,33 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
-            Icon(isCompleted ? Icons.check_circle : Icons.pending_actions, size: 20, color: isCompleted ? Colors.green : Colors.orange),
+
+            // 🚀 2. 將原本的 icon 替換成可點擊的精緻時間按鈕
+            if (widget.reminderText != null && widget.onReminderTap != null)
+              InkWell(
+                onTap: widget.onReminderTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1), // 截圖中的藍色底色
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.alarm_rounded, size: 14, color: Colors.blue.shade700),
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.reminderText!,
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Icon(isCompleted ? Icons.check_circle : Icons.pending_actions, size: 20, color: isCompleted ? Colors.green : Colors.orange),
           ],
         ),
         const SizedBox(height: 4),
@@ -177,18 +209,13 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     );
   }
 
-  // 建議在 _WeeklyTrackerCardState 內新增此方法或修改 Text 的邏輯
   String _getTimeString(PoemRecord record, DateTime weekStartDate) {
-    final DateTime fillDate = record.date!; // 實際填寫時間
-    // 判斷填寫日是否不在那一週內 (或是與該週起始日不同天)
-    // 周量表通常是以該週起始日為準，若 fillDate 距離起始日超過 7 天，顯然是補填
+    final DateTime fillDate = record.date!;
     final bool isLateFill = fillDate.difference(weekStartDate).inDays >= 7;
 
     if (isLateFill) {
-      // 🚀 誠實提醒：這是補填的
       return "補 ${DateFormat('M/d').format(fillDate)}\n${DateFormat('HH:mm').format(fillDate)}";
     } else {
-      // 當週準時填寫
       return DateFormat('HH:mm').format(fillDate);
     }
   }
@@ -196,30 +223,26 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
 
   Widget _buildDateSquare(DateTime date, bool isDone, bool isToday, bool canFill, Color color, PoemRecord? record) {
     return InkWell(
-      // WeeklyTrackerCard.dart 內的 _buildDateSquare
       onTap: () async {
         bool? needsRefresh;
         if (isDone) {
-          HapticFeedback.lightImpact(); // 編輯舊紀錄也給點反饋
-          // 編輯模式
-          needsRefresh = await Navigator.push<bool>( // 🚀 3. 指定返回型別為 bool
+          HapticFeedback.lightImpact();
+          needsRefresh = await Navigator.push<bool>(
               context,
               MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: widget.type, oldRecord: record))
           );
         } else if (canFill || isToday) {
-          HapticFeedback.mediumImpact(); // 補填給稍微重一點的反饋
-          // 補填模式
+          HapticFeedback.mediumImpact();
           HapticFeedback.lightImpact();
-          needsRefresh = await Navigator.push<bool>( // 🚀 3. 指定返回型別為 bool
+          needsRefresh = await Navigator.push<bool>(
               context,
               MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: widget.type, targetDate: date))
           );
         }
 
-        // 🚀 4. 關鍵刷新邏輯修正
         if (needsRefresh == true && mounted) {
-          widget.onRefresh?.call(); // 通知首頁更新數據
-          setState(() {}); // 更新本地顯示
+          widget.onRefresh?.call();
+          setState(() {});
         }
       },
       borderRadius: BorderRadius.circular(10),
@@ -242,6 +265,6 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     );
   }
 
-  String _getScaleTitle(ScaleType t) => {ScaleType.adct: "ADCT 每周異膚控制", ScaleType.poem: "POEM 每周異膚檢測", ScaleType.scorad: "SCORAD 每周異膚綜合"}[t] ?? "量表追蹤";
+  String _getScaleTitle(ScaleType t) => {ScaleType.adct: "ADCT 每周檢測", ScaleType.poem: "POEM 每周檢測", ScaleType.scorad: "SCORAD 每周檢測"}[t] ?? "量表追蹤";
   Color _getScaleColor(ScaleType t) => {ScaleType.adct: Colors.teal, ScaleType.poem: Colors.blue, ScaleType.scorad: Colors.indigo}[t] ?? Colors.grey;
 }

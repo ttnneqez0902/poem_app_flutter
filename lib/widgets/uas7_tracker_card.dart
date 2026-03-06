@@ -8,14 +8,20 @@ class Uas7TrackerCard extends StatefulWidget {
   final DateTime startDate;
   final List<bool> completionStatus;
   final List<PoemRecord> history;
-  final VoidCallback? onRefresh; // 🚀 1. 新增這一行
+  final VoidCallback? onRefresh;
+
+  // 🚀 1. 新增接收外部傳入的時間字串與點擊事件
+  final String? reminderText;
+  final VoidCallback? onReminderTap;
 
   const Uas7TrackerCard({
     super.key,
     required this.startDate,
     required this.completionStatus,
     required this.history,
-    this.onRefresh, // 🚀 2. 在這裡加入參數
+    this.onRefresh,
+    this.reminderText,   // 🚀 加入建構子
+    this.onReminderTap,  // 🚀 加入建構子
   });
 
   @override
@@ -57,7 +63,6 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
     super.dispose();
   }
 
-  // 🚀 輔助方法：找出對應日期的紀錄
   PoemRecord? _getRecordAtDate(DateTime targetDate) {
     try {
       return widget.history.firstWhere((r) =>
@@ -96,7 +101,7 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
                 children: List.generate(widget.completionStatus.length, (index) {
                   final date = widget.startDate.add(Duration(days: index));
                   final bool isDone = widget.completionStatus[index];
-                  final record = _getRecordAtDate(date); // 獲取紀錄以顯示時間
+                  final record = _getRecordAtDate(date);
                   final bool isToday = _isSameDay(date, DateTime.now());
                   final bool isPastUnfinished = !isDone && !isToday && date.isBefore(DateTime.now());
 
@@ -126,9 +131,9 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 10,
-                                height: 1.1, // 調整行高讓兩行字靠攏一點
+                                height: 1.1,
                                 color: isDone && !_isSameDay(_getRecordAtDate(date)?.date ?? date, date)
-                                    ? Colors.orange.shade700 // 🚀 補填顯示橘色字，提醒這是事後回憶的
+                                    ? Colors.orange.shade700
                                     : (isToday ? themeColor : Colors.grey.shade600),
                                 fontWeight: (isDone || isToday) ? FontWeight.bold : FontWeight.normal
                             ),
@@ -153,8 +158,34 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text("UAS7 七日蕁麻疹追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
-            Icon(isTodayDone ? Icons.check_circle_rounded : Icons.pending_actions_rounded, color: isTodayDone ? Colors.green : Colors.orange, size: 24),
+            const Text("UAS7 七日追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
+
+            // 🚀 2. 將原本的 icon 替換成可點擊的精緻時間按鈕
+            if (widget.reminderText != null && widget.onReminderTap != null)
+              InkWell(
+                onTap: widget.onReminderTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1), // 截圖中的藍色底色
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.alarm_rounded, size: 14, color: Colors.blue.shade700),
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.reminderText!,
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Icon(isTodayDone ? Icons.check_circle_rounded : Icons.pending_actions_rounded, color: isTodayDone ? Colors.green : Colors.orange, size: 24),
           ],
         ),
         const SizedBox(height: 4),
@@ -168,31 +199,25 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
 
   Widget _buildDateSquare(DateTime date, bool isDone, bool isToday, bool isPastUnfinished, Color themeColor, PoemRecord? record) {
     return InkWell(
-        onTap: () async {
-          if (isToday || isPastUnfinished || isDone) {
-            // 🚀 1. 等待導航返回結果
-            final result = await Navigator.push<bool>(
-              context,
-              MaterialPageRoute(builder: (context) => PoemSurveyScreen(
-                initialType: ScaleType.uas7,
-                oldRecord: isDone ? record : null,
-                targetDate: isDone ? null : date,
-              )),
-            );
+      onTap: () async {
+        if (isToday || isPastUnfinished || isDone) {
+          final result = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(builder: (context) => PoemSurveyScreen(
+              initialType: ScaleType.uas7,
+              oldRecord: isDone ? record : null,
+              targetDate: isDone ? null : date,
+            )),
+          );
 
-            // 2. 核心修正：如果儲存成功返回 true
-            if (result == true && mounted) {
-              // 🚀 執行傳入的刷新函式，這會通知 HomeScreen 重新抓取資料庫
-              if (widget.onRefresh != null) {
-                widget.onRefresh!();
-              }
-
-              // 同時也刷新卡片內部狀態
-              setState(() {});
+          if (result == true && mounted) {
+            if (widget.onRefresh != null) {
+              widget.onRefresh!();
             }
+            setState(() {});
           }
-        },
-
+        }
+      },
       borderRadius: BorderRadius.circular(10),
       child: Container(
         width: 52, height: 52,
@@ -219,20 +244,16 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
 
   String _getTimeString(DateTime targetDate) {
     try {
-      // 找出該格對應的紀錄
       final record = widget.history.firstWhere(
               (r) => _isSameDay(r.targetDate ?? r.date!, targetDate)
       );
 
-      final DateTime fillDate = record.date!; // 實際按下儲存的時間
-      final bool isLateFill = !_isSameDay(fillDate, targetDate); // 是否為事後補填
+      final DateTime fillDate = record.date!;
+      final bool isLateFill = !_isSameDay(fillDate, targetDate);
 
       if (isLateFill) {
-        // 🚀 補填模式：顯示 "補 2/13" 或是 "2/13 補"
-        // 這樣使用者一看就知道：這是紀錄 2/10 的狀況，但我是 2/13 才補寫的
         return "補 ${DateFormat('M/d').format(fillDate)}\n${DateFormat('HH:mm').format(fillDate)}";
       } else {
-        // 正常當天填寫：僅顯示時間即可
         return DateFormat('HH:mm').format(fillDate);
       }
     } catch (_) {

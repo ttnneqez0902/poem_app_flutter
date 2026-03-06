@@ -6,20 +6,17 @@ import '../models/poem_record.dart';
 class IsarService {
   Isar? _isar;
 
-  // 🚀 關鍵修正：將 getter 名稱改為 db，解決 BootstrapController 的報錯
-  // 這樣 `isarService.db` 就會指向 `_isar`
-  Isar get db {
-    if (_isar == null) {
-      // 這裡不丟 Exception，而是嘗試自動回傳實例或拋出更有用的訊息
-      return Isar.getInstance() ?? (throw Exception("Isar 尚未初始化"));
-    }
-    return _isar!;
-  }
-
-  // 為了保險起見，也可以保留 isar 這個名字（如果你其他地方有用到）
+  // 🚀 核心 Getter：供 Controller 與外部訪問
+  Isar get db => _isar ?? (Isar.getInstance() ?? (throw Exception("Isar 尚未初始化")));
   Isar get isar => db;
 
+  // 🚀 修正 1：對齊 main.dart 的初始化名稱
+  Future<void> init() async {
+    await openDB();
+  }
+
   Future<Isar> openDB() async {
+    // 檢查是否已經有實例在跑
     if (Isar.instanceNames.isEmpty) {
       final dir = await getApplicationDocumentsDirectory();
       _isar = await Isar.open(
@@ -27,9 +24,19 @@ class IsarService {
         directory: dir.path,
       );
     } else {
-      _isar = Isar.getInstance()!;
+      // 🚀 優化點：如果 getInstance 回傳 null，可以試著重新執行一次開檔
+      _isar = Isar.getInstance() ?? await Isar.open(
+        [PoemRecordSchema],
+        directory: (await getApplicationDocumentsDirectory()).path,
+      );
     }
     return _isar!;
+  }
+
+  // 🚀 修正 2：新增熱切換方法 (供 CloudBackupService 使用)
+  // 當雲端還原成功後，調用此方法讓全域實例指向新資料庫
+  void updateInstance(Isar newIsar) {
+    _isar = newIsar;
   }
 
   // 輔助方法：確保每次操作前 Isar 是開著的
@@ -38,7 +45,10 @@ class IsarService {
     return await openDB();
   }
 
-  // --- 以下是原本的功能，確保都使用 _ensureIsar() 以保證安全 ---
+  // --- [ 數據管理架構圖 ] ---
+  //
+
+  // --- 以下功能邏輯保持不變，但確保使用 _ensureIsar() ---
 
   Future<int> getRecordsCountInLastDays(int days) async {
     final startTime = DateTime.now().subtract(Duration(days: days));
@@ -49,6 +59,24 @@ class IsarService {
         .count();
   }
 
+  Future<List<PoemRecord>> getUnsyncedRecords(String? uid) async {
+    if (uid == null) return [];
+    final instance = await _ensureIsar();
+    return await instance.poemRecords
+        .filter()
+        .userIdEqualTo(uid)
+        .isSyncedEqualTo(false)
+        .findAll();
+  }
+
+// 🚀 核心修正：補上 HomeScreen 需要的 getAllRecords
+  Future<List<PoemRecord>> getAllRecords() async {
+    final instance = await _ensureIsar();
+    // 預設按日期降序排列
+    return await instance.poemRecords.where().sortByDateDesc().findAll();
+  }
+
+  // 🚀 核心修正：補上 HistoryListScreen 需要的 updateImageConsent
   Future<void> updateImageConsent(Id id, bool consent) async {
     final instance = await _ensureIsar();
     await instance.writeTxn(() async {
@@ -58,16 +86,6 @@ class IsarService {
         await instance.poemRecords.put(record);
       }
     });
-  }
-
-  Future<List<PoemRecord>> getUnsyncedRecords(String? uid) async {
-    if (uid == null) return [];
-    final instance = await _ensureIsar();
-    return await instance.poemRecords
-        .filter()
-        .userIdEqualTo(uid)
-        .isSyncedEqualTo(false)
-        .findAll();
   }
 
   Future<void> saveRecord(PoemRecord record) async {
@@ -81,19 +99,7 @@ class IsarService {
     });
   }
 
-  Future<List<PoemRecord>> getRecordsInRange(DateTime start, DateTime end) async {
-    final instance = await _ensureIsar();
-    return await instance.poemRecords
-        .filter()
-        .targetDateBetween(start, end)
-        .findAll();
-  }
-
-  Future<List<PoemRecord>> getAllRecords() async {
-    final instance = await _ensureIsar();
-    return await instance.poemRecords.where().findAll();
-  }
-
+  // 🚀 這裡的邏輯很好：saveAllRecords 內建了去重檢查
   Future<void> saveAllRecords(List<PoemRecord> records) async {
     final instance = await _ensureIsar();
     await instance.writeTxn(() async {

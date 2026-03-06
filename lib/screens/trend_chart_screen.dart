@@ -7,7 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/poem_record.dart';
 import '../services/export_service.dart';
 import '../main.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
+import 'package:shared_preferences/shared_preferences.dart';
 
 
 class TrendChartScreen extends StatefulWidget {
@@ -36,13 +36,11 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     final prefs = await SharedPreferences.getInstance();
     Map<ScaleType, bool> tempSettings = {};
     for (var type in ScaleType.values) {
-      // 預設為 true，與首頁邏輯一致
       tempSettings[type] = prefs.getBool('enable_${type.name}') ?? true;
     }
 
     setState(() {
       _enabledScales = tempSettings;
-      // 🚀 安全檢查：如果預設選擇的 ADCT 被關閉了，自動跳到第一個開啟的量表
       if (!(_enabledScales[_selectedScale] ?? true)) {
         _selectedScale = _enabledScales.entries
             .firstWhere((e) => e.value, orElse: () => _enabledScales.entries.first)
@@ -58,7 +56,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       if (displayDate == null || r.scaleType != _selectedScale) return false;
 
       if (_selectedDays == -1 && _customRange != null) {
-        // 🚀 補上自訂日期範圍的判定
         return displayDate.isAfter(_customRange!.start.subtract(const Duration(seconds: 1))) &&
             displayDate.isBefore(_customRange!.end.add(const Duration(days: 1)));
       }
@@ -71,23 +68,26 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   }
 
   // --- 📊 圖表配置邏輯 ---
-  // --- 📊 圖表配置邏輯 ---
-  LineChartData _mainData(List<PoemRecord> filtered) {
+  LineChartData _mainData(List<PoemRecord> filtered, BuildContext context) {
     if (filtered.isEmpty) return LineChartData();
 
     final startDate = filtered.first.targetDate ?? filtered.first.date!;
     final endDate = filtered.last.targetDate ?? filtered.last.date!;
     final double rawDays = endDate.difference(startDate).inMinutes / 1440;
 
-    // 🚀 核心修正：更積極的智慧標籤間隔，解決 14/28/90 天擁擠問題
     double bottomInterval = 1.0;
     if (rawDays > 60) {
-      bottomInterval = 14.0; // 90天：每兩週顯示一個標籤
+      bottomInterval = 14.0;
     } else if (rawDays > 20) {
-      bottomInterval = 7.0;  // 28天：每週顯示一個標籤
+      bottomInterval = 7.0;
     } else if (rawDays >= 10) {
-      bottomInterval = 3.0;  // 14天：每三天顯示一個標籤
+      bottomInterval = 3.0;
     }
+
+    // 🚀 動態判定目前是否為深色模式，以決定網格與文字顏色
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final gridColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
+    final textColor = isDark ? Colors.grey.shade400 : Colors.blueGrey;
 
     return LineChartData(
       minX: -0.2,
@@ -98,28 +98,40 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       gridData: FlGridData(
         show: true,
         drawVerticalLine: true,
-        verticalInterval: bottomInterval, // 網格線隨日期密度調整
+        verticalInterval: bottomInterval,
         horizontalInterval: _getIntervalForScale(_selectedScale),
+        // 🚀 網格線顏色適配深色模式
+        getDrawingHorizontalLine: (value) => FlLine(color: gridColor, strokeWidth: 1),
+        getDrawingVerticalLine: (value) => FlLine(color: gridColor, strokeWidth: 1),
       ),
       titlesData: FlTitlesData(
-        leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40, interval: _getIntervalForScale(_selectedScale))),
+        leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 40,
+              interval: _getIntervalForScale(_selectedScale),
+              // 🚀 Y軸數字顏色適配
+              getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: TextStyle(color: textColor, fontSize: 12)),
+            )
+        ),
         bottomTitles: AxisTitles(
             sideTitles: SideTitles(
                 showTitles: true,
-                reservedSize: 40, // 增加預留高度防止遮擋
-                interval: bottomInterval, // 套用新計算的間隔
+                reservedSize: 40,
+                interval: bottomInterval,
                 getTitlesWidget: (v, m) {
                   if (v < 0 || v > rawDays + 0.1) return const SizedBox.shrink();
 
                   final date = startDate.add(Duration(minutes: (v * 1440).toInt()));
 
                   return Padding(
-                    padding: const EdgeInsets.only(top: 12.0), // 增加間距防止被按鈕擋到
+                    padding: const EdgeInsets.only(top: 12.0),
                     child: Text(
                       DateFormat('MM/dd').format(date),
-                      style: const TextStyle(
+                      // 🚀 X軸日期顏色適配
+                      style: TextStyle(
                           fontSize: 10,
-                          color: Colors.blueGrey,
+                          color: textColor,
                           fontWeight: FontWeight.bold
                       ),
                     ),
@@ -130,16 +142,15 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
       ),
-      borderData: FlBorderData(show: true, border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
+      // 🚀 邊框顏色適配深色模式
+      borderData: FlBorderData(show: true, border: Border(bottom: BorderSide(color: gridColor, width: 2), left: BorderSide(color: gridColor, width: 2))),
     );
   }
-
 
   LineChartBarData _getLineData(List<PoemRecord> records, DateTime startDate) {
     Color color = _getLineColor(_selectedScale);
 
     final List<FlSpot> spots = records.map((r) {
-      // 🚀 修正：使用 targetDate 計算與起點的天數差距
       final displayDate = r.targetDate ?? r.date!;
       return FlSpot(
           displayDate.difference(startDate).inMinutes / 1440,
@@ -151,9 +162,9 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       spots: spots,
       color: color,
       barWidth: 4,
-      isCurved: _selectedScale != ScaleType.uas7 && spots.length >= 3, // 🚀 UAS7 建議用折線
+      isCurved: _selectedScale != ScaleType.uas7 && spots.length >= 3,
       preventCurveOverShooting: true,
-      curveSmoothness: 0.15, // 🚀 降低平滑度
+      curveSmoothness: 0.15,
       dotData: FlDotData(
           show: true,
           getDotPainter: (spot, percent, bar, index) {
@@ -177,7 +188,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   // --- 🎨 UI 建構 ---
   @override
   Widget build(BuildContext context) {
-    // 如果設定還沒讀取完，顯示載入中
     if (_enabledScales.isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -191,7 +201,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
         return Scaffold(
           appBar: AppBar(
             title: const Text("病情趨勢分析", style: TextStyle(fontWeight: FontWeight.bold)),
-            backgroundColor: Colors.blue.shade50,
+            // 🚀 1. 移除 backgroundColor: Colors.blue.shade50，讓 AppBar 隨系統深淺色變換
           ),
           body: SingleChildScrollView(
             child: Column(
@@ -208,10 +218,16 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                     key: _chartKey,
                     child: Container(
                       height: 300,
-                      color: Colors.white,
+                      // 🚀 2. 將 Colors.white 改為 Theme 的 cardColor，並加入圓角讓圖表變精緻
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      padding: const EdgeInsets.only(top: 16, right: 16), // 內縮避免圖表貼邊
                       child: filtered.isEmpty
                           ? const Center(child: Text("目前無檢測紀錄", style: TextStyle(color: Colors.grey)))
-                          : LineChart(_mainData(filtered)),
+                      // 🚀 3. 將 context 傳入 _mainData
+                          : LineChart(_mainData(filtered, context)),
                     ),
                   ),
                 ),
@@ -225,7 +241,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                 const Divider(),
                 const SizedBox(height: 20),
 
-                // 🚀 長輩友善巨型按鈕 (85px 高)
                 _buildLargeExportButton(filtered),
 
                 const SizedBox(height: 60),
@@ -238,23 +253,24 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   }
 
   Widget _buildScaleSelector() {
-    // 🚀 只過濾出被開啟的選項
     final List<ScaleType> availableScales = ScaleType.values
         .where((type) => _enabledScales[type] ?? true)
         .toList();
+
     return Container(
       padding: const EdgeInsets.all(16),
-      color: Colors.blue.shade50,
+      // 🚀 4. 移除外層藍色背景，讓它融入整體 UI
       child: DropdownButtonFormField<ScaleType>(
         value: _selectedScale,
-        style: const TextStyle(fontSize: 20, color: Colors.black, fontWeight: FontWeight.bold),
+        // 🚀 5. 移除 color: Colors.black，改用系統預設字體顏色
+        style: TextStyle(fontSize: 18, color: Theme.of(context).textTheme.bodyLarge?.color, fontWeight: FontWeight.bold),
         decoration: InputDecoration(
             labelText: "分析量表目標",
             filled: true,
-            fillColor: Colors.white,
+            // 🚀 6. 移除 fillColor: Colors.white，改用 Theme 的 cardColor
+            fillColor: Theme.of(context).cardColor,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)
         ),
-        // 🚀 動態生成選單內容
         items: availableScales.map((type) {
           return DropdownMenuItem(
             value: type,
@@ -266,7 +282,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     );
   }
 
-// 輔助方法：獲取更友善的名稱
   String _getScaleDisplayName(ScaleType type) {
     switch (type) {
       case ScaleType.adct: return "ADCT 控制評估 (每週)";
@@ -288,7 +303,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
           onPressed: !hasData ? null : () async {
             final bytes = await _capturePng();
             if (bytes != null) {
-              // 🚀 確保傳遞完整的 filtered 清單，ExportService 會根據 targetDate 再次校準
               ExportService.generateClinicalReport(
                   filtered,
                   bytes,
@@ -301,7 +315,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.indigo.shade700,
             foregroundColor: Colors.white,
-            disabledBackgroundColor: Colors.grey.shade300,
+            disabledBackgroundColor: Colors.grey.shade800, // 🚀 適配深色模式的停用顏色
             elevation: 4,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           ),
@@ -313,15 +327,13 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   Widget _buildChartHeader(List<PoemRecord> filtered) {
     String unit = _selectedScale == ScaleType.uas7 ? '每日' : '每週';
 
-    // 🚀 關鍵修正 1：確保觀察區間顯示的是病程的真實歸屬日期 (Target Date)
     final firstDisplayDate = filtered.isNotEmpty ? (filtered.first.targetDate ?? filtered.first.date!) : null;
     final lastDisplayDate = filtered.isNotEmpty ? (filtered.last.targetDate ?? filtered.last.date!) : null;
 
     return Column(children: [
-      // 🚀 關鍵修正 2：移除 "pw." 前綴。在 Screen 檔案裡要用 Flutter 原生的 TextStyle
       Text(
           "${_getScaleName(_selectedScale)} $unit趨勢圖",
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold) // 移除 pw. 和 const 衝突問題
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)
       ),
       if (filtered.isNotEmpty)
         Padding(
@@ -366,7 +378,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       text = "控制不佳 (≥ 7 分)";
       color = Colors.red;
     } else if (_selectedScale == ScaleType.uas7) {
-      // 🚀 修正：每日圖表應標註每日活性判定
       text = "高度活性 (每日 ≥ 5 分)";
       color = Colors.orange;
     } else {
@@ -379,7 +390,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       child: Row(children: [
         Container(width: 14, height: 14, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
         const SizedBox(width: 10),
-        Text("臨床警戒：$text", style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.blueGrey))
+        Text("臨床警戒：$text", style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.grey)) // 🚀 改為 Colors.grey 更柔和
       ]),
     );
   }
@@ -396,7 +407,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   Color _getLineColor(ScaleType t) {
     if (t == ScaleType.uas7) return Colors.orangeAccent;
     if (t == ScaleType.adct) return Colors.teal;
-    if (t == ScaleType.scorad) return Colors.purpleAccent; // 🚀 新增紫色區分
+    if (t == ScaleType.scorad) return Colors.purpleAccent;
     return Colors.blueAccent;
   }
   String _getScaleName(ScaleType type) => type.toString().split('.').last.toUpperCase();

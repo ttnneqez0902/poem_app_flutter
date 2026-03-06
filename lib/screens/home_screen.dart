@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'poem_survey_screen.dart';
 import 'trend_chart_screen.dart';
 import 'history_list_screen.dart';
+import 'login_screen.dart';
 import '../main.dart';
 import '../models/poem_record.dart';
 import '../widgets/uas7_tracker_card.dart';
@@ -17,9 +18,8 @@ import 'package:path/path.dart' as p; // 🚀 確保有 alias 'p'
 import 'package:path_provider/path_provider.dart'; // 用於 getApplicationDocumentsDirectory
 import '../services/cloud_backup_service.dart'; // 🚀 補上這行
 import '../widgets/backup_dialogs.dart';      // 🚀 補上這行
-import '../services/cloud_backup_service.dart'
-    show BackupException, BackupExceptionType;
-
+import '../services/backup_error_dialog.dart';
+import '../services/notification_service.dart'; // 🚀 補上這行，讓 HomeScreen 認識它
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,6 +41,11 @@ class _HomeScreenState extends State<HomeScreen> {
   );
 
   bool _isManagementMode = false; // 是否開啟管理模式
+  // 🚀 取代原本單一的 _reminderTime
+  final Map<ScaleType, TimeOfDay> _reminderTimes = {};
+  final Map<ScaleType, int> _reminderDays = {}; // 1:週一 ~ 7:週日
+  final Map<ScaleType, bool> _reminderEnabled = {};
+
   Map<ScaleType, bool> _enabledScales = {
     ScaleType.adct: true,
     ScaleType.poem: true,
@@ -48,12 +53,37 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaleType.scorad: true,
   };
 
+  Future<Map<String, dynamic>>? _trackerDataFuture;
+
   @override
   void initState() {
     super.initState();
     _checkUserStatus(); // 檢查登入狀態
     _loadSettings(); // 初始化時載入設定
     _loadLocalPhoto(); // 新增這行
+    _refreshData();
+    _checkBackupRequirement(); // 🚀 記得加上這行
+
+// 🚀 新增：當首頁的 UI 渲染完成後，檢查是否有待處理的通知跳轉
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (pendingPayload != null) {
+        handleNotificationJump(pendingPayload!); // 執行跳轉
+        pendingPayload = null; // 清除任務，避免下次回到首頁又跳轉一次
+      }
+    });
+  }
+
+  // 封裝一個刷新資料的方法，供各處調用
+  void _refreshData() {
+    setState(() {
+      _trackerDataFuture = _getTrackerData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose(); // 🚀 務必釋放資源
+    super.dispose();
   }
 
 // 🚀 1. 先宣告 GoogleSignIn 實例並設定權限範圍
@@ -63,11 +93,13 @@ class _HomeScreenState extends State<HomeScreen> {
     ],
   );
 
-// 2. 🚀 修正初始化代碼，傳入 provider
+// 🚀 修正初始化代碼，補上 onDbSwapped
   late final CloudBackupService cloudBackupService = CloudBackupService(
     isar: isarService.isar,
     isarFactory: () async => await isarService.openDB(),
-    googleSignIn: _googleSignIn, // ✅ 這裡改為 googleSignIn
+    googleSignIn: _googleSignIn,
+    // 🚀 加入這行：還原成功後，同步更新全域的 isar 實體
+    onDbSwapped: (newIsar) => isarService.updateInstance(newIsar),
   );
 
   Future<void> _loadLocalPhoto() async {
@@ -100,22 +132,23 @@ class _HomeScreenState extends State<HomeScreen> {
     // 1. 選取來源
     final ImageSource? source = await showModalBottomSheet<ImageSource>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('從相簿選擇'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
+      builder: (context) =>
+          SafeArea(
+            child: Wrap(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('從相簿選擇'),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.camera_alt),
+                  title: const Text('開啟相機'),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('開啟相機'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-          ],
-        ),
-      ),
+          ),
     );
 
     if (source == null) return;
@@ -177,15 +210,80 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // 載入護理師設定
+// 載入護理師與提醒設定
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       for (var type in ScaleType.values) {
         _enabledScales[type] = prefs.getBool('enable_${type.name}') ?? true;
+
+        // 🚀 載入個別量表的提醒設定
+        _reminderEnabled[type] = prefs.getBool('reminder_enabled_${type.name}') ?? true;
+        _reminderDays[type] = prefs.getInt('reminder_day_${type.name}') ?? DateTime.sunday; // 預設週日
+
+        final savedHour = prefs.getInt('reminder_hour_${type.name}') ?? 20;
+        final savedMinute = prefs.getInt('reminder_minute_${type.name}') ?? 0;
+        _reminderTimes[type] = TimeOfDay(hour: savedHour, minute: savedMinute);
       }
     });
+
+    _scheduleClinicalReminders();
   }
+
+
+  // 🚀 新增：啟動臨床提醒排程的方法
+// 🚀 替換原本的 _scheduleClinicalReminders
+  Future<void> _scheduleClinicalReminders() async {
+    for (var type in ScaleType.values) {
+      // 每個量表給予唯一的 ID (例如 uas7=0, poem=1, adct=2, scorad=3)
+      final int notificationId = type.index;
+
+      // 先取消舊的
+      await NotificationService().cancel(notificationId);
+
+      // 只有在「管理員開啟該量表」且「使用者開啟提醒」時才排程
+      if (_enabledScales[type] == true && _reminderEnabled[type] == true) {
+        final time = _reminderTimes[type]!;
+        final String title = '${type.name.toUpperCase()} 追蹤提醒';
+
+        if (type == ScaleType.uas7) {
+          // 🚀 UAS7 是每日量表
+          await NotificationService().scheduleDailyReminder(
+            id: notificationId,
+            title: title,
+            body: '請花一分鐘記錄今天的皮膚狀況，幫助醫師追蹤您的進度。',
+            hour: time.hour,
+            minute: time.minute,
+            payload: type.name, // 🚀 傳遞量表名稱 (例如 'uas7')
+          );
+        } else {
+          // 🚀 其他是每週量表
+          final day = _reminderDays[type]!;
+          await NotificationService().scheduleWeeklyReminder(
+            id: notificationId,
+            title: title,
+            body: '今天是您的每週紀錄日，請撥空填寫量表。',
+            dayOfWeek: day,
+            hour: time.hour,
+            minute: time.minute,
+            payload: type.name, // 🚀 傳遞量表名稱 (例如 'poem')
+          );
+        }
+      }
+    }
+  }
+
+  // 🚀 儲存提醒設定到手機
+  Future<void> _saveReminderSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (var type in ScaleType.values) {
+      await prefs.setBool('reminder_enabled_${type.name}', _reminderEnabled[type] ?? true);
+      await prefs.setInt('reminder_day_${type.name}', _reminderDays[type] ?? DateTime.sunday);
+      await prefs.setInt('reminder_hour_${type.name}', _reminderTimes[type]?.hour ?? 20);
+      await prefs.setInt('reminder_minute_${type.name}', _reminderTimes[type]?.minute ?? 0);
+    }
+  }
+
 
   // 儲存護理師設定
   Future<void> _saveSettings() async {
@@ -203,7 +301,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final today = DateTime(now.year, now.month, now.day);
     final allRecords = await isarService.getAllRecords();
 
-    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList();
+    final uas7Records = allRecords
+        .where((r) => r.scaleType == ScaleType.uas7)
+        .toList();
     DateTime uas7Start = today.subtract(const Duration(days: 8));
 
     return {
@@ -218,9 +318,14 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }),
       'uas7Records': uas7Records,
-      'adct': allRecords.where((r) => r.scaleType == ScaleType.adct).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
-      'poem': allRecords.where((r) => r.scaleType == ScaleType.poem).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
-      'scorad': allRecords.where((r) => r.scaleType == ScaleType.scorad).toList()..sort((a,b) => b.date!.compareTo(a.date!)),
+      'adct': allRecords.where((r) => r.scaleType == ScaleType.adct).toList()
+        ..sort((a, b) => b.date!.compareTo(a.date!)),
+      'poem': allRecords.where((r) => r.scaleType == ScaleType.poem).toList()
+        ..sort((a, b) => b.date!.compareTo(a.date!)),
+      'scorad': allRecords
+          .where((r) => r.scaleType == ScaleType.scorad)
+          .toList()
+        ..sort((a, b) => b.date!.compareTo(a.date!)),
     };
   }
 
@@ -228,19 +333,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleLogout(BuildContext context) async {
     final bool? confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("確認登出"),
-        content: const Text("您確定要登出系統嗎？"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("登出", style: TextStyle(color: Colors.red)),
+      builder: (ctx) =>
+          AlertDialog(
+            title: const Text("確認登出"),
+            content: const Text("您確定要登出系統嗎？"),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text("取消")),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("登出", style: TextStyle(color: Colors.red)),
+              ),
+            ],
           ),
-        ],
-      ),
     );
-
 
 
     // 🚀 關鍵：這裡必須先處理 confirm 的邏輯，然後才關閉方法
@@ -250,12 +356,16 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseAuth.instance.signOut();
       await GoogleSignIn().signOut();
 
-      // 💡 小建議：登出後通常需要導向登入頁面
-      if (context.mounted) {
-        Navigator.of(context).pushReplacementNamed('/login');
-      }
+      if (!mounted) return;
+
+      // 🚀 修正 5：清除所有路由堆疊，強制回到登入頁
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        // 請確保已 import LoginScreen
+            (route) => false,
+      );
     }
-  } // <--- 確保這一個大括號存在，否則後面的 build 方法會報錯
+  }
 
 // 🚀 1. 計算資料夾大小的方法
   Future<int> _calculateDirectorySize(Directory dir) async {
@@ -276,379 +386,368 @@ class _HomeScreenState extends State<HomeScreen> {
     return "$bytes B";
   }
 
-    @override
-    Widget build(BuildContext context) {
-      // 1. 獲取當前登入的使用者資訊
-      final user = FirebaseAuth.instance.currentUser;
+  @override
+  Widget build(BuildContext context) {
+    // 1. 獲取當前登入的使用者資訊
+    final user = FirebaseAuth.instance.currentUser;
 
-      return Scaffold(
+    return Scaffold(
 
-        appBar: AppBar(
-          leadingWidth: 80,
-          leading: Padding(
-            padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
-            child: PhysicalModel(
-              color: Colors.transparent,
-              shape: BoxShape.circle,
-              elevation: 4,
-              shadowColor: Colors.black.withOpacity(0.4),
-              // 🚀 核心改動：使用 PopupMenuButton 讓選單在頭像旁跳出
-              child: PopupMenuButton<String>(
-                offset: const Offset(0, 56),
-                // 調整彈出位置在頭像下方一點
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
-                onSelected: (value) async {
-                  if (!mounted) return;
-                  if (value == 'photo') {
-                    _handleChangePhoto();
+      appBar: AppBar(
+        leadingWidth: 80,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
+          child: PhysicalModel(
+            color: Colors.transparent,
+            shape: BoxShape.circle,
+            elevation: 4,
+            shadowColor: Colors.black.withOpacity(0.4),
+            // 🚀 核心改動：使用 PopupMenuButton 讓選單在頭像旁跳出
+            child: PopupMenuButton<String>(
+              offset: const Offset(0, 56),
+              // 調整彈出位置在頭像下方一點
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              onSelected: (value) async {
+                if (!mounted) return;
+                if (value == 'photo') {
+                  _handleChangePhoto();
+                  return;
+                }
+
+                // 🚀 建立一個進度通知器，讓對話框能動態顯示 Service 傳回來的 message
+                final progressNotifier = ValueNotifier<String>("準備中...");
+                final percentNotifier = ValueNotifier<double>(0.0); // 🚀 初始化為 0
+
+                if (value == 'sync') {
+                  // 🚀 核心優化：同步前先「靜默刷新」Token，預防紅框錯誤
+                  final GoogleSignInAccount? account = await _googleSignIn
+                      .signInSilently();
+                  if (account == null) {
+                    // 如果靜默登入失敗，手動彈出一次選擇帳號視窗
+                    await _googleSignIn.signIn();
                     return;
                   }
+                  if (_isSyncing) return;
 
-                  if (value == 'sync') {
-                    // 🚀 額外檢查：如果沒登入，先導向登入或彈出提示
-                    if (FirebaseAuth.instance.currentUser == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("請先登入帳號再執行同步")),
-                      );
-                      return;
-                    }
-                    // 🚀 防止重複點擊
-                    if (_isSyncing) return;
 
-                    // A. 計算預估大小
-                    final docDir = await getApplicationDocumentsDirectory();
-                    final dbFile = File(p.join(docDir.path, 'eczema_data.isar'));
-                    final photoDir = Directory(p.join(docDir.path, 'photos'));
+                  // A. 計算大小 (這部分保留)
+                  final docDir = await getApplicationDocumentsDirectory();
+                  final dbFile = File(p.join(docDir.path, 'eczema_data.isar'));
+                  final photoDir = Directory(p.join(docDir.path, 'photos'));
+                  final totalSize = (await dbFile.exists() ? await dbFile
+                      .length() : 0) + await _calculateDirectorySize(photoDir);
 
-                    final int dbSize = await dbFile.exists() ? await dbFile.length() : 0;
-                    final int photoSize = await _calculateDirectorySize(photoDir);
-                    final int totalSize = dbSize + photoSize;
-
-                    // B. 顯示告知與確認對話框
-                    final bool confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text("雲端備份說明"),
-                        content: Text(
-                          "本功能將加密備份您的紀錄與照片至您個人的 Google Drive。\n\n"
-                              "✅ 開發者無法存取您的備份內容\n"
-                              "✅ 備份不會經過第三方伺服器\n"
-                              "📦 預估大小：${_formatBytes(totalSize)}\n\n"
-                              "建議在 Wi-Fi 環境下執行。確定開始？",
+                  // B. 確認對話框
+                  final bool confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) =>
+                        AlertDialog(
+                          title: const Text("雲端備份說明"),
+                          content: Text(
+                              "將加密備份紀錄至 Google Drive。\n\n📦 預估大小：${_formatBytes(
+                                  totalSize)}\n\n建議在 Wi-Fi 環境下執行。確定開始？"),
+                          actions: [
+                            TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text("取消")),
+                            ElevatedButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text("開始備份")),
+                          ],
                         ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: const Text("取消"),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: const Text("開始備份"),
-                          ),
-                        ],
-                      ),
-                    ) ?? false;
+                  ) ?? false;
 
-                    if (!confirmed) return;
+                  if (!confirmed) return;
 
-                    // 🚀【新增】開始備份 → 鎖定狀態
-                    setState(() => _isSyncing = true);
+                  setState(() => _isSyncing = true);
 
-                    try {
-                      await BackupDialogs.showProcessingDialog(
-                        context: context,
-                        title: "正在同步至雲端",
-                        message: "正在上傳紀錄，請勿關閉 App...",
-                        action: () async {
-                          // 修改呼叫處
-                          await cloudBackupService.runBackup(
-                              photoDir.path, // 🚀 加上 .path 轉為 String
-                              appVersion: _appVersion
-                          );
-
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setString(
-                            'last_backup_time',
-                            DateTime.now().toIso8601String(),
-                          );
-                        },
-                      );
-
-                      // ✅ 只有真正成功才顯示
-                      if (mounted) {
-                        await Future.delayed(const Duration(milliseconds: 150));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("雲端備份完成"),
-                            duration: Duration(seconds: 2),
-                          ),
+                  try {
+                    await BackupDialogs.showProcessingDialog(
+                      context: context,
+                      title: "正在同步至雲端",
+                      // 🚀 傳入 notifier，讓對話框監聽文字變化
+                      progressNotifier: progressNotifier,
+                      percentNotifier: percentNotifier,
+                      // 🚀 傳入數值監聽器
+                      action: () async {
+                        await cloudBackupService.runBackup(
+                          photoDir.path,
+                          appVersion: _appVersion,
+                          onProgress: (p) {
+                            progressNotifier.value = p.message; // 更新文字
+                            percentNotifier.value =
+                                p.progress; // 🚀 更新進度條數值 (0.0~1.0)
+                          },
                         );
-                      }
 
-                    } catch (e) {
-                      String message = "雲端備份失敗，請稍後再試";
-
-                      if (e is BackupException) {
-                        switch (e.type) {
-                          case BackupExceptionType.network:
-                            message = "網路連線異常，請檢查網路後再試";
-                            break;
-                          case BackupExceptionType.permission:
-                            message = "雲端權限異常，請重新登入";
-                            break;
-                          case BackupExceptionType.storage:
-                            message = "雲端空間不足，請釋放空間後再試";
-                            break;
-                          case BackupExceptionType.incomplete: // ✅ 補上這一個 case
-                            message = "備份資料不完整，無法執行還原";
-                            break;
-                          case BackupExceptionType.unknown:
-                          default: // ✅ 加上 default 確保萬無一失
-                            message = "雲端服務失敗，請稍後再試";
-                            break;
-                        }
-                      }
-
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(message),
-                            backgroundColor: Colors.redAccent,
-                            duration: const Duration(seconds: 3),
-                          ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) {
-                        setState(() => _isSyncing = false);
-                      }
-                    }
-                    return;
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setString('last_backup_time',
+                            DateTime.now().toIso8601String());
+                      },
+                    );
+                    // 🚀 修正 4：在 await 之後，檢查 widget 是否還在畫面內
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("雲端備份完成"))
+                    );
+                  } catch (e) {
+                    if (!mounted) return;
+                    if (e is BackupException) BackupErrorDialog.show(
+                        context, e);
+                  } finally {
+                    if (mounted) setState(() => _isSyncing = false);
                   }
+                  return;
+                }
 
-                  if (value == 'restore') {
-                    final bool confirmed = await BackupDialogs.confirmRestore(context);
-                    if (!confirmed) return;
+                if (value == 'restore') {
+                  final bool confirmed = await BackupDialogs.confirmRestore(
+                      context);
+                  if (!confirmed) return;
 
+                  final progressNotifier = ValueNotifier<String>(
+                      "正在聯繫雲端...");
+                  final percentNotifier = ValueNotifier<double>(0.0); // 🚀 補上這行
+                  setState(() => _isSyncing = true);
+
+                  try {
                     await BackupDialogs.showProcessingDialog(
                       context: context,
                       title: "正在恢復數據",
-                      message: "正在從雲端載入您的紀錄與照片，完成後將自動更新...",
+                      progressNotifier: progressNotifier,
+                      percentNotifier: percentNotifier,
+                      // 🚀 補上這行
                       action: () async {
-                        // 🚀 確保這裡拿到的是 Directory 物件，或者清楚它是 String
                         final docDir = await getApplicationDocumentsDirectory();
                         final String photoPath = p.join(docDir.path, 'photos');
 
-                        // 直接傳入路徑字串
-                        await cloudBackupService.runRestore(photoPath);
-                        await cloudBackupService.runBackup(photoPath, appVersion: _appVersion);
+                        // 🚀 核心修正：只執行還原，絕對不要在這邊接 runBackup！
+                        await cloudBackupService.runRestore(
+                          photoPath,
+                          onProgress: (p) {
+                            progressNotifier.value = p.message;
+                            percentNotifier.value = p.progress; // 🚀 讓還原進度條也能跑
+                          },
+                        );
 
-                        if (mounted) setState(() {});
+                        if (mounted) _refreshData(); // 讓 UI 刷新顯示新抓回來的資料
                       },
                     );
-                    return;
+                  } catch (e) {
+                    if (e is BackupException) BackupErrorDialog.show(
+                        context, e);
+                  } finally {
+                    if (mounted) setState(() => _isSyncing = false);
                   }
+                  return; // 🚀 記得補 return
+                }
 
-                  if (value == 'logout') {
-                    _handleLogout(context);
-                    return;
-                  }
-                },
+                if (value == 'logout') {
+                  _handleLogout(context);
+                  return;
+                }
+              },
 
-                // 這是原本的頭像 UI
+              // 這是原本的頭像 UI
+              child: CircleAvatar(
+                radius: 30,
+                backgroundColor: Colors.white,
                 child: CircleAvatar(
-                  radius: 30,
-                  backgroundColor: Colors.white,
-                  child: CircleAvatar(
-                    radius: 27,
-                    backgroundColor: Colors.blue.shade100,
-                    backgroundImage: (_localPhotoPath != null &&
-                        File(_localPhotoPath!).existsSync()
-                        ? FileImage(File(_localPhotoPath!))
-                        : (user?.photoURL != null
-                        ? NetworkImage(user!.photoURL!)
-                        : null)) as ImageProvider?,
-                    child: (_localPhotoPath == null && user?.photoURL == null)
-                        ? Text(
-                      user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 20),
-                    )
-                        : null,
+                  radius: 27,
+                  backgroundColor: Colors.blue.shade100,
+                  backgroundImage: (_localPhotoPath != null &&
+                      File(_localPhotoPath!).existsSync()
+                      ? FileImage(File(_localPhotoPath!))
+                      : (user?.photoURL != null
+                      ? NetworkImage(user!.photoURL!)
+                      : null)) as ImageProvider?,
+                  child: (_localPhotoPath == null && user?.photoURL == null)
+                      ? Text(
+                    user?.displayName?.substring(0, 1).toUpperCase() ?? "U",
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 20),
+                  )
+                      : null,
+                ),
+              ),
+              // 🚀 定義彈出的選單內容
+              itemBuilder: (context) =>
+              [
+                const PopupMenuItem(
+                  value: 'photo',
+                  child: Row(
+                    children: [
+                      Icon(Icons.photo_library_rounded, color: Colors.blue),
+                      SizedBox(width: 12),
+                      Text("更換頭像"),
+                    ],
                   ),
                 ),
-                // 🚀 定義彈出的選單內容
-                itemBuilder: (context) =>
-                [
-                  const PopupMenuItem(
-                    value: 'photo',
-                    child: Row(
-                      children: [
-                        Icon(Icons.photo_library_rounded, color: Colors.blue),
-                        SizedBox(width: 12),
-                        Text("更換頭像"),
-                      ],
-                    ),
+                // 在 itemBuilder 的回傳清單中加入：
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                  value: 'sync', // 🚀 確保這個 value 跟下方 onSelected 對應
+                  child: Row(
+                    children: [
+                      _isSyncing
+                          ? const SizedBox(width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.cloud_upload_outlined,
+                          color: Colors.green),
+                      const SizedBox(width: 12),
+                      const Text("同步至雲端"),
+                    ],
                   ),
-                  // 在 itemBuilder 的回傳清單中加入：
-                  const PopupMenuDivider(),
-                  PopupMenuItem(
-                    value: 'sync', // 🚀 確保這個 value 跟下方 onSelected 對應
-                    child: Row(
-                      children: [
-                        _isSyncing
-                            ? const SizedBox(width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.cloud_upload_outlined,
-                            color: Colors.green),
-                        const SizedBox(width: 12),
-                        const Text("同步至雲端"),
-                      ],
-                    ),
+                ),
+                // 在 PopupMenuButton 的 itemBuilder 內增加：
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'restore',
+                  child: Row(
+                    children: [
+                      Icon(Icons.cloud_download_outlined, color: Colors
+                          .orange),
+                      SizedBox(width: 12),
+                      Text("從雲端恢復數據"),
+                    ],
                   ),
-                  // 在 PopupMenuButton 的 itemBuilder 內增加：
-                  const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'restore',
-                    child: Row(
-                      children: [
-                        Icon(Icons.cloud_download_outlined, color: Colors
-                            .orange),
-                        SizedBox(width: 12),
-                        Text("從雲端恢復數據"),
-                      ],
-                    ),
+                ),
+                const PopupMenuDivider(), // 分割線
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout_rounded, color: Colors.redAccent),
+                      SizedBox(width: 12),
+                      Text("登出系統"),
+                    ],
                   ),
-                  const PopupMenuDivider(), // 分割線
-                  const PopupMenuItem(
-                    value: 'logout',
-                    child: Row(
-                      children: [
-                        Icon(Icons.logout_rounded, color: Colors.redAccent),
-                        SizedBox(width: 12),
-                        Text("登出系統"),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          title: Column(
-            children: [
-              const Text("皮膚健康管理",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              if (user != null)
-                Text(
-                  user.email ?? "雲端帳號已登入", // 🚀 顯示登入 Email 以利確認帳號
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-            ],
-          ),
-          centerTitle: true,
-          actions: [
-            IconButton(
-              // 🚀 管理模式下顯示儲存圖示，平常顯示設定圖示
-              icon: Icon(
-                _isManagementMode ? Icons.check_circle : Icons
-                    .settings_suggest_rounded,
-                color: _isManagementMode ? Colors.green : null,
-                size: 28,
+        ),
+        title: Column(
+          children: [
+            const Text("皮膚健康管理",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            if (user != null)
+              Text(
+                user.email ?? "雲端帳號已登入", // 🚀 顯示登入 Email 以利確認帳號
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
               ),
-              onPressed: () {
-                // 🚀 如果目前是關閉狀態，準備進入模式時跳出提示
+          ],
+        ),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            // 🚀 管理模式下顯示儲存圖示，平常顯示設定圖示
+            icon: Icon(
+              _isManagementMode ? Icons.check_circle : Icons
+                  .settings_suggest_rounded,
+              color: _isManagementMode ? Colors.green : null,
+              size: 28,
+            ),
+            onPressed: () {
+              // 🚀 如果目前是關閉狀態，準備進入模式時跳出提示
+              if (!_isManagementMode) {
+                ScaffoldMessenger
+                    .of(context)
+                    .hideCurrentSnackBar(); // 清除現有的 SnackBar
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("已進入管理員模式：點選方塊可開啟/關閉檢測"),
+                    backgroundColor: Colors.blueAccent,
+                    duration: Duration(seconds: 3),
+                    behavior: SnackBarBehavior.floating, // 懸浮樣式，更現代
+                  ),
+                );
+              }
+
+              setState(() {
+                _isManagementMode = !_isManagementMode;
                 if (!_isManagementMode) {
-                  ScaffoldMessenger
-                      .of(context)
-                      .hideCurrentSnackBar(); // 清除現有的 SnackBar
+                  // 🚀 關閉模式並儲存
+                  _saveSettings();
+
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text("已進入管理員模式：點選方塊可開啟/關閉檢測"),
-                      backgroundColor: Colors.blueAccent,
-                      duration: Duration(seconds: 3),
-                      behavior: SnackBarBehavior.floating, // 懸浮樣式，更現代
+                      content: Text("設定已儲存"),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 1),
+                      behavior: SnackBarBehavior.floating,
                     ),
                   );
                 }
+              });
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 16),
+            // 🚀 四個量表大方塊區域
+            _buildScaleGrid(context),
 
-                setState(() {
-                  _isManagementMode = !_isManagementMode;
-                  if (!_isManagementMode) {
-                    // 🚀 關閉模式並儲存
-                    _saveSettings();
+            // 🚀 修正 1：縮小間隔，將 24 改為 12
+            const SizedBox(height: 0),
+            const Divider(thickness: 0.5, height: 1), // 讓線條更精緻
+            const SizedBox(height: 12),
 
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("設定已儲存"),
-                        backgroundColor: Colors.green,
-                        duration: Duration(seconds: 1),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  }
-                });
-              },
-            ),
-            const SizedBox(width: 8),
+            // 次要導覽按鈕 (趨勢圖、歷史紀錄)
+            _buildSecondaryNavigation(context),
+
+            // 🚀 修正 2：縮小按鈕與輪播標題間的距離，將 24 改為 16
+            const SizedBox(height: 16),
+            _buildSwiperHeader(),
+
+            // 下方的臨床進度輪播卡片
+            _buildProgressSwiper(),
+            const SizedBox(height: 40),
           ],
         ),
-        body: SingleChildScrollView(
-          child: Column(
-            children: [
-              const SizedBox(height: 16),
-              // 🚀 四個量表大方塊區域
-              _buildScaleGrid(context),
-
-              // 🚀 修正 1：縮小間隔，將 24 改為 12
-              const SizedBox(height: 0),
-              const Divider(thickness: 0.5, height: 1), // 讓線條更精緻
-              const SizedBox(height: 12),
-
-              // 次要導覽按鈕 (趨勢圖、歷史紀錄)
-              _buildSecondaryNavigation(context),
-
-              // 🚀 修正 2：縮小按鈕與輪播標題間的距離，將 24 改為 16
-              const SizedBox(height: 16),
-              _buildSwiperHeader(),
-
-              // 下方的臨床進度輪播卡片
-              _buildProgressSwiper(),
-              const SizedBox(height: 40),
-            ],
-          ),
-        ),
-      );
-    }
+      ),
+    );
+  }
 
 
   Future<void> _handleManualBackup() async {
-    // 🚀 這裡改用我們新寫好的 Dialog 邏輯
+    final progressNotifier = ValueNotifier<String>("正在同步...");
+    final percentNotifier = ValueNotifier<double>(0.0); // 🚀 補上百分比監聽器
+
     await BackupDialogs.showProcessingDialog(
       context: context,
       title: "資料同步中",
-      message: "正在安全地備份您的所有健康紀錄...",
+      progressNotifier: progressNotifier,
+      percentNotifier: percentNotifier,
+      // 🚀 傳入進度條監聽器
       action: () async {
         final docDir = await getApplicationDocumentsDirectory();
-        // 🚀 我們統一使用 photoPath 這個名稱，它是一個 String
         final String photoPath = p.join(docDir.path, 'photos');
 
-        // 呼叫 Service 執行全系統備份
-        await cloudBackupService.runRestore(photoPath);
+        // 🚀 正確呼叫：Backup 而不是 Restore
+        await cloudBackupService.runBackup(
+          photoPath,
+          appVersion: _appVersion,
+          onProgress: (p) {
+            progressNotifier.value = p.message; // 更新文字訊息
+            percentNotifier.value = p.progress; // 🚀 更新百分比數值 (0.0 ~ 1.0)
+          },
+        );
 
-        // 2. 執行還原後的「落地即備份」 (同樣直接傳入字串)
-        await cloudBackupService.runBackup(photoPath, appVersion: _appVersion);
-
-        if (mounted) setState(() {});
-
-        // 💡 備份成功後更新最後備份時間，用於「四週提醒」邏輯
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('last_backup_time', DateTime.now().toIso8601String());
+        await prefs.setString(
+            'last_backup_time', DateTime.now().toIso8601String());
       },
     );
   }
+
   // 在 HomeScreen 或某個啟動邏輯中檢查
   Future<void> _checkBackupRequirement() async {
     final prefs = await SharedPreferences.getInstance();
@@ -662,7 +761,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _showBackupHint();
     } else if (lastBackupStr != null) {
       final lastBackup = DateTime.parse(lastBackupStr);
-      final daysSinceBackup = DateTime.now().difference(lastBackup).inDays;
+      final daysSinceBackup = DateTime
+          .now()
+          .difference(lastBackup)
+          .inDays;
 
       // 🚀 如果超過 28 天沒備份，且這段時間有新照片/紀錄
       if (daysSinceBackup >= 28 && recentRecords > 0) {
@@ -688,24 +790,56 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showManagementGuide() {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [Icon(Icons.settings_suggest_rounded, color: Colors.blue), SizedBox(width: 10), Text("管理員模式")],
-        ),
-        content: const Text("現在您可以自由點選量表方塊來「開啟」或「關閉」病患需要的檢測項目。\n\n設定完成後，請再次點擊右上角勾勾儲存。"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("我知道了", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18))),
-        ],
-      ),
+      builder: (ctx) =>
+          AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.settings_suggest_rounded, color: Colors.blue),
+                SizedBox(width: 10),
+                Text("管理員模式")
+              ],
+            ),
+            content: const Text(
+                "現在您可以自由點選量表方塊來「開啟」或「關閉」病患需要的檢測項目。\n\n設定完成後，請再次點擊右上角勾勾儲存。"),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx),
+                  child: const Text("我知道了", style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 18))),
+            ],
+          ),
     );
   }
 
   Widget _buildScaleGrid(BuildContext context) {
     final List<Map<String, dynamic>> scales = [
-      {'type': ScaleType.adct, 'title': 'ADCT', 'sub': '每周異膚控制', 'color': Colors.blue, 'icon': Icons.assignment_turned_in},
-      {'type': ScaleType.poem, 'title': 'POEM', 'sub': '每周濕疹檢測', 'color': Colors.orange, 'icon': Icons.opacity},
-      {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '每日蕁麻疹量表', 'color': Colors.teal, 'icon': Icons.calendar_month},
-      {'type': ScaleType.scorad, 'title': 'SCORAD', 'sub': '每周異膚綜合', 'color': Colors.purple, 'icon': Icons.biotech},
+      {
+        'type': ScaleType.adct,
+        'title': 'ADCT',
+        'sub': '每周異膚控制',
+        'color': Colors.blue,
+        'icon': Icons.assignment_turned_in
+      },
+      {
+        'type': ScaleType.poem,
+        'title': 'POEM',
+        'sub': '每周濕疹檢測',
+        'color': Colors.orange,
+        'icon': Icons.opacity
+      },
+      {
+        'type': ScaleType.uas7,
+        'title': 'UAS7',
+        'sub': '每日蕁麻疹量表',
+        'color': Colors.teal,
+        'icon': Icons.calendar_month
+      },
+      {
+        'type': ScaleType.scorad,
+        'title': 'SCORAD',
+        'sub': '每周異膚綜合',
+        'color': Colors.purple,
+        'icon': Icons.biotech
+      },
     ];
 
     return Padding(
@@ -714,7 +848,10 @@ class _HomeScreenState extends State<HomeScreen> {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2, crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 1.2,
+          crossAxisCount: 2,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 1.2,
         ),
         itemCount: scales.length,
         itemBuilder: (context, index) {
@@ -733,7 +870,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 // 🚀 1. 執行導航並明確指定期待回傳 bool
                 final result = await Navigator.push<bool>(
                   context,
-                  MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: type)),
+                  MaterialPageRoute(builder: (context) =>
+                      PoemSurveyScreen(initialType: type)),
                 );
 
                 // 🚀 2. 核心修正：處理返回後的資料更新
@@ -741,21 +879,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (result == true && mounted) {
                   // 第一步：立即觸發 setState。這會讓父層的 FutureBuilder 重新執行 _getTrackerData()
                   // 這樣從資料庫撈出來的最新 uas7Status 才會反應在日曆上
-                  setState(() {});
+                  _refreshData(); // 🚀 這裡原本是 setState(() {}); 改成呼叫統一方法
 
                   // 🚀 這裡可以加上靜默檢查
                   _checkAndSilentBackup();
 
                   // 第二步：稍微延遲，等待新的數據渲染完成後，再執行 PageView 的自動對齊動畫
                   Future.delayed(const Duration(milliseconds: 300), () {
-                    if (mounted) {
-                      _jumpToScalePage(type);
-                    }
+                    if (mounted) _jumpToScalePage(type); // 對齊到該卡片
                   });
                 }
               } else {
                 HapticFeedback.vibrate();
-                _showDisabledScaleNotice(scale['title'], scale['sub']); // 使用您之前定義的彈窗提示
+                _showDisabledScaleNotice(
+                    scale['title'], scale['sub']); // 使用您之前定義的彈窗提示
               }
             },
             child: _buildScaleCard(scale, isEnabled),
@@ -776,21 +913,22 @@ class _HomeScreenState extends State<HomeScreen> {
     // 策略：每 28 天自動備份一次
     if (lastSyncStr != null) {
       final lastSync = DateTime.parse(lastSyncStr);
-      if (now.difference(lastSync).inDays < 28) return;
+      if (now
+          .difference(lastSync)
+          .inDays < 28) return;
     }
 
     try {
       final docDir = await getApplicationDocumentsDirectory();
-      final String photoPath = p.join(docDir.path, 'photos'); // 🚀 定義字串
+      final String photoPath = p.join(docDir.path, 'photos');
 
-      // 執行備份 (不顯示 Dialog)
-      await cloudBackupService.runRestore(photoPath);
+      // 🚀 正確呼叫：Backup 而不是 Restore
+      await cloudBackupService.runBackup(photoPath, appVersion: _appVersion);
 
-      // 紀錄成功時間
       await prefs.setString('last_silent_backup', now.toIso8601String());
       debugPrint("✅ 自動靜默備份完成");
     } catch (e) {
-      debugPrint("❌ 自動備份失敗: $e"); // 靜默失敗，不打擾使用者
+      debugPrint("❌ 自動備份失敗: $e");
     }
   }
 
@@ -798,13 +936,16 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showDisabledScaleNotice(String title, String sub) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text("$title 功能已關閉"),
-        content: Text("目前的病患照護計畫中，不需要執行「$sub」。\n\n如有需求，請洽詢主治醫師或護理人員開啟此量表。"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("確定")),
-        ],
-      ),
+      builder: (ctx) =>
+          AlertDialog(
+            title: Text("$title 功能已關閉"),
+            content: Text(
+                "目前的病患照護計畫中，不需要執行「$sub」。\n\n如有需求，請洽詢主治醫師或護理人員開啟此量表。"),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx),
+                  child: const Text("確定")),
+            ],
+          ),
     );
   }
 
@@ -826,7 +967,15 @@ class _HomeScreenState extends State<HomeScreen> {
             width: double.infinity,
             decoration: BoxDecoration(
               // 🚀 改為白色底色或極淡的主題色，陰影才顯眼
-              color: isEnabled ? Colors.white : Colors.grey.shade100,
+              // 修改後：使用主題色，系統切換時它會自動變色
+              color: isEnabled
+                  ? Theme
+                  .of(context)
+                  .cardColor
+                  : Theme
+                  .of(context)
+                  .disabledColor
+                  .withOpacity(0.1),
               borderRadius: BorderRadius.circular(24),
               // 🚀 核心修改：加入動態陰影
               boxShadow: [
@@ -840,14 +989,16 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
               // 邊框稍微調淡，讓陰影當主角
               border: Border.all(
-                  color: isEnabled ? scale['color'].withOpacity(0.4) : Colors.grey.shade300,
+                  color: isEnabled ? scale['color'].withOpacity(0.4) : Colors
+                      .grey.shade300,
                   width: 1.5
               ),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(scale['icon'], size: 40, color: isEnabled ? scale['color'] : Colors.grey),
+                Icon(scale['icon'], size: 40,
+                    color: isEnabled ? scale['color'] : Colors.grey),
                 const SizedBox(height: 8),
                 Text(
                     scale['title'],
@@ -861,7 +1012,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     scale['sub'],
                     style: TextStyle(
                         fontSize: 14,
-                        color: isEnabled ? scale['color'].withOpacity(0.8) : Colors.grey,
+                        color: isEnabled
+                            ? scale['color'].withOpacity(0.8)
+                            : Colors.grey,
                         fontWeight: FontWeight.bold
                     )
                 ),
@@ -889,22 +1042,44 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildProgressSwiper() {
-    final enabledTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
-    if (enabledTypes.isEmpty) return const SizedBox(height: 200, child: Center(child: Text("請在上方開啟檢測項目")));
+    final enabledTypes = ScaleType.values.where((t) =>
+    _enabledScales[t] == true).toList();
+// 🚀 修正 6：更精美的 Empty State
+    if (enabledTypes.isEmpty) {
+      return Container(
+        height: 200,
+        margin: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey.shade300, width: 1),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.settings_outlined, color: Colors.grey, size: 40),
+              SizedBox(height: 12),
+              Text("尚未開啟任何追蹤項目\n請點擊右上角設定",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Column(
       children: [
         SizedBox(
           height: 295,
           child: FutureBuilder<Map<String, dynamic>>(
-            // 🚀 確保每次 setState 都會重新執行數據庫查詢
-            future: _getTrackerData(),
+            future: _trackerDataFuture, // 🚀 修正 3：使用快取的 Future
             builder: (context, snapshot) {
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-
-              // 這裡拿到的 data 已經是根據新的 targetDate 比對過的結果
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
               final data = snapshot.data!;
-
               return PageView.builder(
                 controller: _pageController,
                 itemCount: _virtualTotalCount,
@@ -922,16 +1097,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-// 在 HomeScreen.dart 內
+// 🚀 修改 3：把存好的提醒文字與點擊事件傳遞給卡片
   Widget _buildCardByType(ScaleType type, Map<String, dynamic> data) {
-    // 🚀 核心邏輯：定義一個刷新函式，當子組件完成填寫返回時調用
-    final VoidCallback onRefresh = () {
-      if (mounted) {
-        setState(() {
-          // 觸發 build，進而讓 FutureBuilder 重新執行 _getTrackerData()
-        });
-      }
+    final VoidCallback onRefresh = () => _refreshData();
+
+    // 定義星期轉換，用來顯示 "週三 20:00"
+    const Map<int, String> weekdaysShort = {
+      1: '週一', 2: '週二', 3: '週三', 4: '週四', 5: '週五', 6: '週六', 7: '週日'
     };
+
+    // 建立顯示字串 (如果是開啟的，顯示時間；如果是關閉的，顯示尚未設定)
+    String? reminderText;
+    if (_reminderEnabled[type] == true && _reminderTimes.containsKey(type)) {
+      final timeStr = _reminderTimes[type]!.format(context);
+      if (type == ScaleType.uas7) {
+        reminderText = timeStr; // 每日只顯示時間
+      } else {
+        final dayStr = weekdaysShort[_reminderDays[type] ?? 7];
+        reminderText = "$dayStr $timeStr"; // 每週顯示 星期+時間
+      }
+    }
+
+    // 當卡片右上角的按鈕被點擊時，直接呼叫剛剛寫好的底層面板
+    final VoidCallback onReminderTap = () => _showReminderSettingsModal();
 
     switch (type) {
       case ScaleType.uas7:
@@ -939,26 +1127,24 @@ class _HomeScreenState extends State<HomeScreen> {
           startDate: data['uas7Start'],
           completionStatus: data['uas7Status'],
           history: data['uas7Records'],
-          // 🚀 如果你有在 Uas7TrackerCard 定義回標，請傳入
-          onRefresh: onRefresh, // 🚀 記得在 Uas7TrackerCard.dart 裡補上這個參數定義
+          onRefresh: onRefresh,
+          reminderText: reminderText,    // 🚀 傳入文字
+          onReminderTap: onReminderTap,  // 🚀 傳入點擊事件
         );
       case ScaleType.adct:
         return WeeklyTrackerCard(
-          type: ScaleType.adct,
-          history: data['adct'],
-          onRefresh: onRefresh,
+          type: ScaleType.adct, history: data['adct'], onRefresh: onRefresh,
+          reminderText: reminderText, onReminderTap: onReminderTap,
         );
       case ScaleType.poem:
         return WeeklyTrackerCard(
-          type: ScaleType.poem,
-          history: data['poem'],
-          // onRefresh: onRefresh,
+          type: ScaleType.poem, history: data['poem'], onRefresh: onRefresh,
+          reminderText: reminderText, onReminderTap: onReminderTap,
         );
       case ScaleType.scorad:
         return WeeklyTrackerCard(
-          type: ScaleType.scorad,
-          history: data['scorad'],
-          // onRefresh: onRefresh,
+          type: ScaleType.scorad, history: data['scorad'], onRefresh: onRefresh,
+          reminderText: reminderText, onReminderTap: onReminderTap,
         );
       default:
         return const SizedBox.shrink();
@@ -986,7 +1172,8 @@ class _HomeScreenState extends State<HomeScreen> {
               height: 8,
               width: currentPage == index ? 20 : 8,
               decoration: BoxDecoration(
-                color: currentPage == index ? Colors.blue : Colors.grey.shade300,
+                color: currentPage == index ? Colors.blue : Colors.grey
+                    .shade300,
                 borderRadius: BorderRadius.circular(4),
               ),
             );
@@ -999,14 +1186,16 @@ class _HomeScreenState extends State<HomeScreen> {
   void _jumpToScalePage(ScaleType type) {
     if (!_pageController.hasClients) return;
 
-    final enabledTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
+    final enabledTypes = ScaleType.values.where((t) =>
+    _enabledScales[t] == true).toList();
     int targetIndexInEnabled = enabledTypes.indexOf(type);
     if (targetIndexInEnabled == -1) return;
 
     int count = enabledTypes.length;
 
     // 🚀 修正：參考點改為目前的實際位置，若無則參考初始值 500
-    double currentPageValue = _pageController.page ?? _virtualInitialPage.toDouble();
+    double currentPageValue = _pageController.page ??
+        _virtualInitialPage.toDouble();
     int currentPage = currentPageValue.round();
 
     int currentMode = currentPage % count;
@@ -1021,56 +1210,64 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSecondaryNavigation(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildSmallMenuButton(context, "查看趨勢", Icons.bar_chart_rounded, Colors.teal.shade700,
-                    () async {
-                  await Navigator.push(context, MaterialPageRoute(builder: (context) => const TrendChartScreen()));
-                  if (mounted) setState(() {}); // 返回時刷新，確保資料一致
-                }),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildSmallMenuButton(context, "歷史紀錄", Icons.list_alt_rounded, Colors.blueGrey.shade700,
-                    () async {
-                  await Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryListScreen()));
-                  if (mounted) setState(() {}); // 歷史紀錄最常發生刪除/修改，務必刷新
-                }),
-          ),
-        ],
-      )
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          children: [
+            Expanded(
+              child: _buildSmallMenuButton(
+                  context, "查看趨勢", Icons.bar_chart_rounded,
+                  Colors.teal.shade700,
+                      () async {
+                    await Navigator.push(context, MaterialPageRoute(
+                        builder: (context) => const TrendChartScreen()));
+                    if (mounted) _refreshData(); // 返回時刷新，確保資料一致
+                  }),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildSmallMenuButton(
+                  context, "歷史紀錄", Icons.list_alt_rounded,
+                  Colors.blueGrey.shade700,
+                      () async {
+                    await Navigator.push(context, MaterialPageRoute(
+                        builder: (context) => const HistoryListScreen()));
+                    if (mounted) _refreshData(); // 歷史紀錄最常發生刪除/修改，務必刷新
+                  }),
+            ),
+          ],
+        )
     );
   }
 
-  Widget _buildSmallMenuButton(BuildContext context, String label, IconData icon, Color color, VoidCallback onTap) {
+// 🚀 幫按鈕補上震動
+  Widget _buildSmallMenuButton(BuildContext context, String label,
+      IconData icon, Color color, VoidCallback onTap) {
     return ElevatedButton.icon(
-      onPressed: onTap,
+      onPressed: () {
+        HapticFeedback.lightImpact(); // 🚀 加入輕微震動回饋
+        onTap();
+      },
       icon: Icon(icon, size: 24),
-      label: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 18, // 🚀 字體放大
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.2, // 增加字距讓質感更好
-          )
-      ),
+      label: Text(label, style: const TextStyle(
+          fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
       style: ElevatedButton.styleFrom(
-        // 🚀 垂直 Padding 從 12 增加到 18，讓按鈕看起來更厚實
         padding: const EdgeInsets.symmetric(vertical: 14),
-        backgroundColor: Colors.white,
+        // 🚀 改為主題卡片顏色，而非固定白色
+        backgroundColor: Theme
+            .of(context)
+            .cardColor,
         foregroundColor: color,
         elevation: 2,
         shadowColor: color.withOpacity(0.3),
         shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15), // 圓角稍微加大一點點
+            borderRadius: BorderRadius.circular(15),
             side: BorderSide(color: color.withOpacity(0.3), width: 1.5)
         ),
       ),
     );
   }
-// 修改 _buildSwiperHeader 增加左右提示圖示
+
+// 🚀 替換原本的 _buildSwiperHeader 與時間挑選器
   Widget _buildSwiperHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -1080,11 +1277,178 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 8),
           const Text("臨床進度週期追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const Spacer(),
-          // 🚀 新增：提示可以左右滑動的圖示
-          Icon(Icons.chevron_left, size: 20, color: Colors.grey.shade400),
-          Icon(Icons.chevron_right, size: 20, color: Colors.grey.shade400),
+
+          // 🚀 新的「提醒設定」按鈕
+          InkWell(
+            onTap: _showReminderSettingsModal,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blueGrey.withOpacity(0.3), width: 1.5),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))],
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.alarm_rounded, size: 16, color: Colors.blue.shade600),
+                  const SizedBox(width: 6),
+                  Text("提醒設定", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
+// 🚀 全新的量表獨立設定面板
+  void _showReminderSettingsModal() {
+    HapticFeedback.lightImpact();
+
+    // 定義星期對應表
+    const Map<int, String> weekdays = {
+      1: '週一', 2: '週二', 3: '週三', 4: '週四', 5: '週五', 6: '週六', 7: '週日'
+    };
+
+    showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        builder: (BuildContext ctx) {
+          return StatefulBuilder(
+              builder: (context, setModalState) {
+                final activeTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
+
+                return Padding(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+                    left: 20, right: 20, top: 24,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("⏰ 各項量表提醒設定", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+
+                      if (activeTypes.isEmpty)
+                        const Text("目前沒有開啟任何量表。", style: TextStyle(color: Colors.grey)),
+
+                      // 列出所有目前啟用的量表
+                      ...activeTypes.map((type) {
+                        final isDaily = type == ScaleType.uas7;
+                        return Card(
+                          elevation: 0,
+                          color: Theme.of(context).cardColor,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              side: BorderSide(color: Colors.grey.shade300)
+                          ),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              children: [
+                                // 標題與開關
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      "${type.name.toUpperCase()} (${isDaily ? '每日' : '每週'})",
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                    ),
+                                    Switch(
+                                      value: _reminderEnabled[type] ?? true,
+                                      onChanged: (val) {
+                                        setModalState(() => _reminderEnabled[type] = val);
+                                        setState(() => _reminderEnabled[type] = val);
+                                      },
+                                    ),
+                                  ],
+                                ),
+
+                                // 時間與星期選擇器
+                                if (_reminderEnabled[type] == true)
+                                  Row(
+                                    children: [
+                                      if (!isDaily) ...[
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                                          decoration: BoxDecoration(
+                                            color: Colors.blue.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: DropdownButtonHideUnderline(
+                                            child: DropdownButton<int>(
+                                              value: _reminderDays[type],
+                                              items: weekdays.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
+                                              onChanged: (val) {
+                                                if (val != null) {
+                                                  setModalState(() => _reminderDays[type] = val);
+                                                  setState(() => _reminderDays[type] = val);
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                      ],
+
+                                      Expanded(
+                                        child: ElevatedButton.icon(
+                                          icon: const Icon(Icons.access_time),
+                                          label: Text(_reminderTimes[type]!.format(context)),
+                                          style: ElevatedButton.styleFrom(
+                                            elevation: 0,
+                                            backgroundColor: Colors.blue.withOpacity(0.1),
+                                            foregroundColor: Colors.blue.shade700,
+                                          ),
+                                          onPressed: () async {
+                                            final time = await showTimePicker(context: context, initialTime: _reminderTimes[type]!);
+                                            if (time != null) {
+                                              setModalState(() => _reminderTimes[type] = time);
+                                              setState(() => _reminderTimes[type] = time);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.shade700,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _saveReminderSettings();
+                            await _scheduleClinicalReminders();
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ 提醒設定已儲存並生效")));
+                          },
+                          child: const Text("儲存設定", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+          );
+        }
+    );
+  }
+
 }

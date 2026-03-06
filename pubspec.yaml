@@ -13,37 +13,42 @@ dependencies:
   google_fonts: ^6.2.1
   image_picker: ^1.1.2
 
+  # --- 數據庫與檔案處理 ---
   isar: ^3.1.0+1
   isar_flutter_libs: ^3.1.0+1
+  path_provider: ^2.1.2
+  path: ^1.9.0                # 🚀 修正：補上路徑處理工具
+  http: ^1.1.0
+
+  # --- 雲端備份與授權 ---
   googleapis: ^13.0.0
   extension_google_sign_in_as_googleapis_auth: ^2.0.13
-  http: ^1.1.0
-  path_provider: ^2.1.2
+  google_sign_in: ^6.2.1
   icloud_storage: ^2.2.0
 
-  # 修正這裡：使用最新的 plus 版本
-  # icloud_storage_plus: ^1.0.0  # <--- 先加 # 字號註解掉
-
-  flutter_local_notifications: ^20.0.0
+  # --- 通知與提醒 ---
+  flutter_local_notifications: ^20.1.0
   timezone: ^0.10.1
+  flutter_timezone: ^3.0.1    # 🚀 修正：補上時區獲取工具 (Notification 必備)
   shared_preferences: ^2.5.3
 
+  # --- 臨床功能與 UI ---
   flutter_riverpod: ^2.5.1
   intl: ^0.19.0
+  font_awesome_flutter: ^10.7.0
+  image_cropper: ^11.0.0
 
+  # --- 報表導出與分享 ---
   pdf: ^3.10.8
   printing: ^5.11.1
   share_plus: ^10.0.0
-  font_awesome_flutter: ^10.7.0
 
+  # --- Firebase 核心 ---
   firebase_core: ^3.15.2
   firebase_auth: ^5.4.0
   cloud_firestore: ^5.6.0
-
-  google_sign_in: ^6.2.1
   sign_in_with_apple: ^7.0.1
   flutter_line_sdk: ^2.6.2
-  image_cropper: ^11.0.0
 
 dev_dependencies:
   flutter_test:
@@ -53,9 +58,11 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # 🚀 確保資源目錄結構與這裡一致
   assets:
     - assets/
-    - assets/images/  # 如果你有放照片
+    - assets/images/
     - assets/fonts/
 
   fonts:
@@ -68,6 +75,6 @@ flutter:
       fonts:
         - asset: assets/fonts/NotoSansMath-Regular.ttf
 
-    - family: NotoEmoji  # 🚀 新增 Emoji 字體家族
+    - family: NotoEmoji
       fonts:
         - asset: assets/fonts/NotoColorEmoji-Regular.ttf

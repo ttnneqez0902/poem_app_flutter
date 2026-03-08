@@ -1,13 +1,13 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/poem_record.dart';
 import '../main.dart';
 import '../services/export_service.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 🚀 補上這行
-import 'poem_survey_screen.dart'; // 🚀 加入這行匯入
+import 'package:shared_preferences/shared_preferences.dart';
+import 'poem_survey_screen.dart';
 
-// 🚀 1. 定義修正後的篩選模式：移除 daily，加入 adct
 enum HistoryViewFilter { all, adct, poem, uas7, scorad }
 
 class HistoryListScreen extends StatefulWidget {
@@ -18,7 +18,6 @@ class HistoryListScreen extends StatefulWidget {
 }
 
 class _HistoryListScreenState extends State<HistoryListScreen> {
-  // 預設選擇「全部紀錄」
   HistoryViewFilter _selectedFilter = HistoryViewFilter.all;
   Map<ScaleType, bool> _enabledScales = {};
 
@@ -39,7 +38,6 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
     setState(() {
       _enabledScales = tempSettings;
-      // 🚀 防呆：如果目前選取的篩選標籤對應的量表被關閉了，自動跳回「全部」
       if (_selectedFilter != HistoryViewFilter.all) {
         ScaleType? currentType = _getScaleTypeFromFilter(_selectedFilter);
         if (currentType != null && !(_enabledScales[currentType] ?? true)) {
@@ -49,7 +47,6 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     });
   }
 
-  // 輔助方法：將 Filter 轉回 ScaleType 以便檢查開關
   ScaleType? _getScaleTypeFromFilter(HistoryViewFilter filter) {
     switch (filter) {
       case HistoryViewFilter.adct: return ScaleType.adct;
@@ -62,7 +59,6 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 🚀 如果設定尚未讀取完成，顯示載入轉圈，避免標籤列閃爍
     if (_enabledScales.isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -78,12 +74,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       backgroundColor: isDarkMode ? null : Colors.grey.shade50,
       body: Column(
         children: [
-          // 🚀 2. 橫向篩選標籤列 (整合 ADCT)
           _buildUnifiedFilterChips(),
 
           Expanded(
             child: FutureBuilder<List<PoemRecord>>(
-              // 🚀 確保每次觸發 setState 都會重新執行資料庫查詢
               future: isarService.getAllRecords(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -94,7 +88,6 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
                 final filteredRecords = allRecords.where((r) {
                   if (r.type == RecordType.daily) return false;
-
                   bool isScaleEnabled = _enabledScales[r.scaleType] ?? true;
                   if (!isScaleEnabled) return false;
 
@@ -107,12 +100,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                   }
                 }).toList();
 
-                // 🚀 關鍵修正：排序邏輯
-                // 依「目標歸屬日期」由新到舊排序，若無則退而求其次用錄入日期
                 filteredRecords.sort((a, b) {
                   final dateA = a.targetDate ?? a.date ?? DateTime.now();
                   final dateB = b.targetDate ?? b.date ?? DateTime.now();
-                  return dateB.compareTo(dateA); // 由新到舊
+                  return dateB.compareTo(dateA);
                 });
 
                 if (filteredRecords.isEmpty) return _buildEmptyState();
@@ -130,7 +121,6 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     );
   }
 
-  // 🚀 橫向篩選標籤：字體稍微放大
   Widget _buildUnifiedFilterChips() {
     return Container(
       color: Theme.of(context).brightness == Brightness.dark ? null : Colors.blue.shade50,
@@ -183,71 +173,115 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     );
   }
 
-  // --- 🎨 紀錄卡片：長輩友善與 Null 安全 ---
-
+  // --- 🎨 紀錄卡片：進化加入 Dismissible 與 人性化日期 ---
   Widget _buildRecordCard(BuildContext context, PoemRecord record) {
     final Color iconColor = _getSeverityColor(record);
     final IconData iconData = _getScaleIcon(record.scaleType);
 
-    // 🚀 修正 1：大標題顯示「歸屬日期」(補填的那天)
-    final String targetDateStr = record.targetDate != null
-        ? DateFormat('yyyy/MM/dd').format(record.targetDate!)
-        : (record.date != null ? DateFormat('yyyy/MM/dd').format(record.date!) : "日期未知");
+    final DateTime displayDate = record.targetDate ?? record.date ?? DateTime.now();
+    final String targetDateStr = _getHumanizedDate(displayDate);
 
-    // 🚀 修正 2：副標題或細節標註「錄入時間」(實際填寫當下)
     final String createdTimeStr = record.date != null
         ? DateFormat('MM/dd HH:mm').format(record.date!)
         : "";
 
-    return Card(
-      margin: const EdgeInsets.only(top: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ExpansionTile(
-        leading: CircleAvatar(
-          backgroundColor: iconColor.withOpacity(0.1),
-          child: Icon(iconData, color: iconColor),
+    // 🚀 進化：加入 Dismissible 實現側滑刪除
+    return Dismissible(
+      key: Key(record.id.toString()),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        margin: const EdgeInsets.only(top: 12),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: Colors.redAccent,
+          borderRadius: BorderRadius.circular(16),
         ),
-        // 顯示歸屬日期
-        title: Text(targetDateStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "${_getScaleName(record.scaleType)}：${_getSeverityText(record)} (${record.score ?? 0}分)",
-              style: const TextStyle(fontSize: 14),
-            ),
-            // 🚀 新增：標註錄入時間
-            if (createdTimeStr.isNotEmpty)
-              Text(
-                  "實際錄入：$createdTimeStr", // 🚀 增加字樣讓語意更清楚
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic)
+        child: const Icon(Icons.delete_sweep_rounded, color: Colors.white, size: 32),
+      ),
+      confirmDismiss: (direction) async {
+        HapticFeedback.mediumImpact();
+        return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("確認刪除？"),
+            content: Text("即將刪除 $targetDateStr 的 ${_getScaleName(record.scaleType)} 紀錄，此動作無法復原。"),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("確定刪除", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
               ),
+            ],
+          ),
+        );
+      },
+      onDismissed: (direction) async {
+        await isarService.deleteRecord(record.id);
+        _refresh();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("已刪除 $targetDateStr 的紀錄"), behavior: SnackBarBehavior.floating),
+        );
+      },
+      child: Card(
+        margin: const EdgeInsets.only(top: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ExpansionTile(
+          leading: CircleAvatar(
+            backgroundColor: iconColor.withOpacity(0.1),
+            child: Icon(iconData, color: iconColor),
+          ),
+          title: Text(targetDateStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "${_getScaleName(record.scaleType)}：${_getSeverityText(record)} (${record.score ?? 0}分)",
+                style: const TextStyle(fontSize: 14),
+              ),
+              if (createdTimeStr.isNotEmpty)
+                Text(
+                    "實際錄入：$createdTimeStr",
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic)
+                ),
+            ],
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildScoreDetails(record),
+                  if (record.imagePath != null && File(record.imagePath!).existsSync())
+                    _buildPhotoWithConsent(record),
+                  const SizedBox(height: 16),
+                  _buildActionButtons(record),
+                ],
+              ),
+            ),
           ],
         ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildScoreDetails(record),
-                if (record.imagePath != null && File(record.imagePath!).existsSync())
-                  _buildPhotoWithConsent(record),
-                const SizedBox(height: 16),
-                _buildActionButtons(record),
-              ],
-            ),
-          ),
-        ],
       ),
     );
+  }
+
+  // 🚀 進化：人性化日期輔助方法
+  String _getHumanizedDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final target = DateTime(date.year, date.month, date.day);
+
+    if (target == today) return "今天 (${DateFormat('E', 'zh_TW').format(date)})";
+    if (target == yesterday) return "昨天 (${DateFormat('E', 'zh_TW').format(date)})";
+    return DateFormat('yyyy/MM/dd (E)', 'zh_TW').format(date);
   }
 
   Widget _buildScoreDetails(PoemRecord record) {
     final int score = record.score ?? 0;
     String description = "";
 
-    // 🚀 依據不同量表顯示正確的臨床判讀
     switch (record.scaleType) {
       case ScaleType.adct:
         description = score >= 7 ? "⚠️ 目前濕疹控制不佳，建議諮詢醫師。" : "✅ 目前濕疹控制良好。";
@@ -257,6 +291,9 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         break;
       case ScaleType.uas7:
         description = "UAS7 七日活性判定：${_getSeverityText(record)}";
+        break;
+      case ScaleType.scorad: // 🚀 進化：補上 SCORAD 描述
+        description = "SCORAD 綜合評估：${_getSeverityText(record)}";
         break;
       default:
         description = "已完成臨床評估紀錄。";
@@ -288,17 +325,21 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     ]);
   }
 
-  // --- 🔧 臨床輔助工具 (包含 ADCT 判斷) ---
-
+  // --- 🔧 臨床輔助工具 (進化：補齊 SCORAD 判讀邏輯) ---
   Color _getSeverityColor(PoemRecord record) {
     final int score = record.score ?? 0;
     if (record.scaleType == ScaleType.adct) {
-      return score >= 7 ? Colors.red : Colors.green; //
+      return score >= 7 ? Colors.red : Colors.green;
     }
     if (record.scaleType == ScaleType.uas7) {
       if (score >= 28) return Colors.red;
       if (score >= 16) return Colors.orange;
-      return Colors.green; //
+      return Colors.green;
+    }
+    if (record.scaleType == ScaleType.scorad) {
+      if (score >= 50) return Colors.red;
+      if (score >= 25) return Colors.orange;
+      return Colors.green;
     }
     // POEM
     if (score >= 17) return Colors.red;
@@ -318,6 +359,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         if (s >= 28) return "高度活性";
         if (s >= 16) return "中度活性";
         return "低度活性";
+      case ScaleType.scorad:
+        if (s >= 50) return "重度";
+        if (s >= 25) return "中度";
+        return "輕度";
       default: return "已完成";
     }
   }
@@ -335,12 +380,12 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   IconData _getScaleIcon(ScaleType type) {
     if (type == ScaleType.uas7) return Icons.show_chart_rounded;
     if (type == ScaleType.adct) return Icons.fact_check_rounded;
+    if (type == ScaleType.scorad) return Icons.biotech_rounded;
     return Icons.assignment_rounded;
   }
 
   Widget _buildActionButtons(PoemRecord record) {
     return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-      // 🚀 修改按鈕
       TextButton.icon(
         onPressed: () async {
           final result = await Navigator.push(
@@ -348,12 +393,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
             MaterialPageRoute(
               builder: (context) => PoemSurveyScreen(
                 initialType: record.scaleType,
-                oldRecord: record, // 🚀 傳入舊紀錄進行編輯模式
+                oldRecord: record,
               ),
             ),
           );
-
-          // 🚀 修改完畢回傳結果後，強制觸發頁面刷新
           if (result != null) {
             _refresh();
             ScaffoldMessenger.of(context).showSnackBar(
@@ -370,6 +413,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         icon: const Icon(Icons.picture_as_pdf),
         label: const Text("PDF", style: TextStyle(fontWeight: FontWeight.bold)),
       ),
+      // 🚀 刪除按鈕依然保留，滿足不想滑動的使用者
       TextButton.icon(
         onPressed: () => _confirmDelete(context, record),
         icon: const Icon(Icons.delete_outline, color: Colors.red),
@@ -378,7 +422,21 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     ]);
   }
 
-  Widget _buildEmptyState() => const Center(child: Text("目前尚無此項紀錄", style: TextStyle(color: Colors.grey, fontSize: 16)));
+  // 🚀 進化：美化空白狀態
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.inbox_rounded, size: 80, color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+          Text("目前尚無此項紀錄", style: TextStyle(color: Colors.grey.shade600, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text("您填寫的臨床檢測都會顯示在這裡", style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
+        ],
+      ),
+    );
+  }
 
   void _confirmDelete(BuildContext context, PoemRecord record) {
     showDialog(

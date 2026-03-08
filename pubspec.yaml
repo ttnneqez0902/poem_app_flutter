@@ -8,6 +8,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  google_mobile_ads: ^5.2.0  # 🚀 檢查這行是否存在
+  app_tracking_transparency: ^2.0.4  # 🚀 新增這行
   cupertino_icons: ^1.0.8
   fl_chart: ^0.70.0
   google_fonts: ^6.2.1
@@ -17,7 +19,7 @@ dependencies:
   isar: ^3.1.0+1
   isar_flutter_libs: ^3.1.0+1
   path_provider: ^2.1.2
-  path: ^1.9.0                # 🚀 修正：補上路徑處理工具
+  path: ^1.9.0
   http: ^1.1.0
 
   # --- 雲端備份與授權 ---
@@ -29,7 +31,7 @@ dependencies:
   # --- 通知與提醒 ---
   flutter_local_notifications: ^20.1.0
   timezone: ^0.10.1
-  flutter_timezone: ^3.0.1    # 🚀 修正：補上時區獲取工具 (Notification 必備)
+  flutter_timezone: ^3.0.1
   shared_preferences: ^2.5.3
 
   # --- 臨床功能與 UI ---
@@ -55,13 +57,14 @@ dev_dependencies:
     sdk: flutter
   isar_generator: ^3.1.0+1
   build_runner: ^2.4.9
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0  # 🚀 修正：補上開機畫面套件
 
 flutter:
   uses-material-design: true
 
-  # 🚀 確保資源目錄結構與這裡一致
+  # 🚀 修正：資產路徑建議直接列出子目錄即可
   assets:
-    - assets/
     - assets/images/
     - assets/fonts/
 
@@ -70,6 +73,7 @@ flutter:
       fonts:
         - asset: assets/fonts/NotoSansTC-Regular.ttf
         - asset: assets/fonts/NotoSansTC-Bold.ttf
+          weight: 700
 
     - family: NotoSansMath
       fonts:
@@ -78,3 +82,22 @@ flutter:
     - family: NotoEmoji
       fonts:
         - asset: assets/fonts/NotoColorEmoji-Regular.ttf
+
+# --- App Icon 配置 ---
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/app_logo.png"
+  remove_alpha_ios: true # 🚀 加上這一行，系統會自動幫您把透明背景填滿
+  # Android 8.0+ 適配性圖標設定
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/app_logo.png"
+
+# --- 開機畫面配置 (🚀 補上這段) ---
+flutter_native_splash:
+  color: "#FFFFFF" # 背景顏色
+  image: "assets/images/app_logo.png" # 中央 Logo
+  android_12:
+    image: "assets/images/app_logo.png"
+    color: "#FFFFFF"
+  fullscreen: true

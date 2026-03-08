@@ -158,7 +158,7 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text("UAS7 七日追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
+            const Text("UAS7七日追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
 
             // 🚀 2. 將原本的 icon 替換成可點擊的精緻時間按鈕
             if (widget.reminderText != null && widget.onReminderTap != null)

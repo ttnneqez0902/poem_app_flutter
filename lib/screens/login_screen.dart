@@ -1,11 +1,11 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter/services.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
-import 'package:flutter_line_sdk/flutter_line_sdk.dart';
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,178 +17,277 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
 
-  // --- 🔐 輔助函式：產生 Apple 登入所需的 Nonce ---
+  // --- 🔐 輔助函式：產生 Apple 登入所需的 Nonce (保留你原本的優秀邏輯) ---
   String _generateNonce([int length = 32]) {
     const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
     final random = List.generate(length, (_) => charset[DateTime.now().microsecond % charset.length]);
-    return random.join(); // 回傳原始字串
+    return random.join();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.blue.shade50,
-      body: Stack(
-        children: [
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.monitor_heart_rounded, size: 80, color: Colors.blue),
-                  const SizedBox(height: 20),
-                  const Text("臨床數據雲端同步",
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
-                  const SizedBox(height: 10),
-                  const Text("登入後即可在不同裝置同步紀錄",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 16, color: Colors.grey)),
-                  const SizedBox(height: 50),
-
-                  // Google 登入
-                  _loginButton(
-                    label: "使用 Google 登入",
-                    icon: FontAwesomeIcons.google,
-                    color: Colors.white,
-                    textColor: Colors.black87,
-                    onPressed: _isLoading ? null : () => _handleGoogleSignIn(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Apple 登入 (通常建議只在 iOS 顯示，或確認 Web 支援)
-                  _loginButton(
-                    label: "使用 Apple 登入",
-                    icon: FontAwesomeIcons.apple,
-                    color: Colors.black,
-                    textColor: Colors.white,
-                    onPressed: _isLoading ? null : () => _handleAppleSignIn(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // LINE 登入
-                  _loginButton(
-                    label: "使用 LINE 登入",
-                    icon: FontAwesomeIcons.line,
-                    color: const Color(0xFF06C755),
-                    textColor: Colors.white,
-                    onPressed: _isLoading ? null : () => _handleLineSignIn(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_isLoading)
-            Container(
-              color: Colors.black26,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _loginButton({
-    required String label,
-    required IconData icon,
-    required Color color,
-    required Color textColor,
-    required VoidCallback? onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 60,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: FaIcon(icon, color: textColor),
-        label: Text(label, style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        ),
-      ),
-    );
-  }
-
-  // --- 🔐 登入邏輯實作區 ---
-
-  Future<void> _handleGoogleSignIn() async {
-    setState(() => _isLoading = true);
+  // ============================
+  // 1. 訪客登入 (新增)
+  // ============================
+  Future<void> _signInAsGuest() async {
+    _setLoading(true);
     try {
-      // 🚀 修正 1：改用具名實例呼叫
-      final GoogleSignIn googleSignIn = GoogleSignIn();
-      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+      await FirebaseAuth.instance.signInAnonymously();
+      // 成功後，AuthGate 會自動切換到 HomeScreen
+    } on FirebaseAuthException catch (e) {
+      _showErrorDialog("訪客登入失敗", e.message ?? "發生未知錯誤");
+    } finally {
+      if (mounted) _setLoading(false);
+    }
+  }
 
+  // ============================
+  // 2. Google 登入 (優化版)
+  // ============================
+  Future<void> _signInWithGoogle() async {
+    _setLoading(true);
+    try {
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
       if (googleUser == null) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
+        if (mounted) _setLoading(false);
+        return; // 使用者取消登入
       }
 
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
 
-      // 🚀 修正 2：處理可能為 null 的 token (使用 ! 或預設值)
       final OAuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
       await FirebaseAuth.instance.signInWithCredential(credential);
+    } on FirebaseAuthException catch (e) {
+      _showErrorDialog("Google 登入失敗", e.message ?? "請檢查網路或帳號設定");
     } catch (e) {
-      _showErrorSnackBar("Google 登入失敗: $e");
+      _showErrorDialog("登入中斷", "無法完成 Google 登入: $e");
     } finally {
-      // 🚀 修正 3：加入 mounted 檢查
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) _setLoading(false);
     }
   }
 
-  Future<void> _handleAppleSignIn() async {
-    setState(() => _isLoading = true);
+  // ============================
+  // 3. Apple 登入 (支援雙平台)
+  // ============================
+  Future<void> _signInWithApple() async {
+    _setLoading(true);
     try {
-      final rawNonce = _generateNonce();
-      // Apple 登入需要將 rawNonce 進行 sha256 雜湊後傳入
-      final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
+      if (Platform.isIOS) {
+        // 🍎 iOS 原生體驗：使用 FaceID/TouchID 與 Nonce 防護
+        final rawNonce = _generateNonce();
+        final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
 
-      final appleCredential = await SignInWithApple.getAppleIDCredential(
-        scopes: [
-          AppleIDAuthorizationScopes.email,
-          AppleIDAuthorizationScopes.fullName,
+        final appleCredential = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+          nonce: hashedNonce,
+        );
+
+        final credential = OAuthProvider("apple.com").credential(
+          idToken: appleCredential.identityToken,
+          rawNonce: rawNonce,
+        );
+
+        await FirebaseAuth.instance.signInWithCredential(credential);
+      } else {
+        // 🤖 Android 體驗：透過 Firebase 彈出 Apple 網頁驗證
+        final provider = OAuthProvider("apple.com");
+        provider.addScope('email');
+        provider.addScope('name');
+
+        // signInWithProvider 會自動處理 Android 上的跳轉與回調
+        await FirebaseAuth.instance.signInWithProvider(provider);
+      }
+    } on FirebaseAuthException catch (e) {
+      _showErrorDialog("Apple 登入失敗", e.message ?? "發生未知錯誤");
+    } catch (e) {
+      debugPrint("Apple Sign In Canceled or Error: $e");
+    } finally {
+      if (mounted) _setLoading(false);
+    }
+  }
+
+  // --- UI 輔助方法 ---
+  void _setLoading(bool value) {
+    setState(() => _isLoading = value);
+  }
+
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red),
+            const SizedBox(width: 8),
+            Text(title, style: const TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("確定")),
         ],
-        nonce: hashedNonce, // 這裡傳雜湊後的
-      );
-
-      final OAuthCredential credential = OAuthProvider("apple.com").credential(
-        idToken: appleCredential.identityToken,
-        rawNonce: rawNonce, // 這裡傳原始的
-      );
-
-      await FirebaseAuth.instance.signInWithCredential(credential);
-    } catch (e) {
-      _showErrorSnackBar("Apple 登入失敗: $e");
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+      ),
+    );
   }
 
-  Future<void> _handleLineSignIn() async {
-    setState(() => _isLoading = true);
-    try {
-      final result = await LineSDK.instance.login();
-      // 注意：Firebase 不直接支援 LINE
-      // 這邊通常需要串接後端 Cloud Functions 使用自定義 Token
-      // 或暫時僅使用 LINE SDK 獲取資料
-      debugPrint("LINE 使用者名稱: ${result.userProfile?.displayName}");
+  // ============================
+  // 畫面建構 (全新適配深淺色模式 UI)
+  // ============================
+  @override
+  Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
-      // 💡 如果你沒有 Cloud Function，這裡無法直接登入 Firebase
-      // 你可能需要跳過 Firebase 驗證或實作 Custom Auth
-    } catch (e) {
-      _showErrorSnackBar("LINE 登入失敗: $e");
-    } finally {
-      setState(() => _isLoading = false);
-    }
+    return Scaffold(
+      body: Stack(
+        children: [
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: isDark
+                    ? [const Color(0xFF121212), const Color(0xFF1E293B)]
+                    : [Colors.blue.shade50, Colors.white],
+              ),
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.monitor_heart_rounded, size: 80, color: Colors.blue.shade600),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      "CareSync 健康隨行",
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        color: isDark ? Colors.white : Colors.blueGrey.shade900,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "記錄您的臨床進度\n為您量身打造的健康追蹤工具",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: isDark ? Colors.grey.shade400 : Colors.blueGrey.shade600,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 60),
+
+                    _buildLoginButton(
+                      icon: Icons.g_mobiledata_rounded,
+                      iconSize: 40,
+                      label: "使用 Google 帳號登入",
+                      backgroundColor: isDark ? Colors.grey.shade800 : Colors.white,
+                      textColor: isDark ? Colors.white : Colors.black87,
+                      borderColor: isDark ? Colors.grey.shade700 : Colors.grey.shade300,
+                      onPressed: _signInWithGoogle,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 🚀 關鍵：自動偵測作業系統，隱藏不相容的 Apple 按鈕
+                    if (Platform.isIOS) ...[
+                      _buildLoginButton(
+                        icon: Icons.apple_rounded,
+                        iconSize: 28,
+                        label: "使用 Apple 登入",
+                        backgroundColor: isDark ? Colors.white : Colors.black,
+                        textColor: isDark ? Colors.black : Colors.white,
+                        borderColor: Colors.transparent,
+                        onPressed: _signInWithApple,
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    _buildLoginButton(
+                      icon: Icons.person_outline_rounded,
+                      iconSize: 26,
+                      label: "以訪客身分快速開始",
+                      backgroundColor: Colors.blue.shade600,
+                      textColor: Colors.white,
+                      borderColor: Colors.transparent,
+                      onPressed: _signInAsGuest,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          if (_isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.4),
+              child: const Center(
+                child: Card(
+                  elevation: 8,
+                  child: Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  // --- 統一的按鈕元件 ---
+  Widget _buildLoginButton({
+    required IconData icon,
+    required double iconSize,
+    required String label,
+    required Color backgroundColor,
+    required Color textColor,
+    required Color borderColor,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: ElevatedButton(
+        onPressed: () {
+          HapticFeedback.lightImpact();
+          onPressed();
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: textColor,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: borderColor, width: 1.5),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: iconSize),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

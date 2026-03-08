@@ -170,7 +170,16 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
+            // 🚀 關鍵修正：用 Expanded 包住標題，設定單行與溢出省略號 (...)
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(width: 8), // 增加一點安全間距，避免文字跟按鈕黏死
 
             // 🚀 2. 將原本的 icon 替換成可點擊的精緻時間按鈕
             if (widget.reminderText != null && widget.onReminderTap != null)
@@ -265,6 +274,6 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     );
   }
 
-  String _getScaleTitle(ScaleType t) => {ScaleType.adct: "ADCT 每周檢測", ScaleType.poem: "POEM 每周檢測", ScaleType.scorad: "SCORAD 每周檢測"}[t] ?? "量表追蹤";
+  String _getScaleTitle(ScaleType t) => {ScaleType.adct: "ADCT每周檢測", ScaleType.poem: "POEM每周檢測", ScaleType.scorad: "SCORAD每周檢測"}[t] ?? "量表追蹤";
   Color _getScaleColor(ScaleType t) => {ScaleType.adct: Colors.teal, ScaleType.poem: Colors.blue, ScaleType.scorad: Colors.indigo}[t] ?? Colors.grey;
 }

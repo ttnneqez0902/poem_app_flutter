@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/date_symbol_data_local.dart'; // 🚀 補上這行
+import 'package:google_mobile_ads/google_mobile_ads.dart'; // 🚀 補上這一行
+
+import 'dart:io';
+import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 
 import 'firebase_options.dart';
 
@@ -48,6 +53,22 @@ void handleNotificationJump(String payload) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 🚀 2. 處理 iOS 廣告追蹤權限 (放在 MobileAds 初始化之前)
+  if (Platform.isIOS) {
+    // 稍微延遲一下，確保 App UI 已準備好顯示權限視窗
+    await Future.delayed(const Duration(milliseconds: 1000));
+    final status = await AppTrackingTransparency.trackingAuthorizationStatus;
+    if (status == TrackingStatus.notDetermined) {
+      await AppTrackingTransparency.requestTrackingAuthorization();
+    }
+  }
+
+  // 🚀 核心：這行沒加的話，廣告絕對跑不出來
+  await MobileAds.instance.initialize();
+
+  // 🚀 關鍵修正：載入中文日期格式字典，這樣 HistoryListScreen 才能顯示 (週一)
+  await initializeDateFormatting('zh_TW', null);
+
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await isarService.init();
 
@@ -174,7 +195,7 @@ class MyApp extends StatelessWidget {
       valueListenable: themeNotifier,
       builder: (_, mode, __) => MaterialApp(
         navigatorKey: navigatorKey, // 🚀 4. 把全域鑰匙交給 MaterialApp
-        title: '皮膚健康管理',
+        title: 'CareSync 健康隨行',
         debugShowCheckedModeBanner: false,
         themeMode: mode,
         theme: ThemeData(

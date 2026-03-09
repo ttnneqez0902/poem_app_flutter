@@ -63,14 +63,29 @@ class _HomeScreenState extends State<HomeScreen> {
   BannerAd? _bannerAd;
   bool _isAdLoaded = false;
 
+  // 🚀 1. 插頁廣告相關變數
+  InterstitialAd? _interstitialAd;
+  int _numInterstitialLoadAttempts = 0;
+  static const int maxFailedLoadAttempts = 3; // 最多嘗試重新載入 3 次
+
 // 🚀 2. 使用 kReleaseMode 自動切換正式與測試 ID
+// 🚀 使用 kReleaseMode 自動切換，確保開發時只看測試廣告，上線才跑正式廣告
   final String _adUnitId = kReleaseMode
       ? (Platform.isAndroid
-      ? 'ca-app-pub-6250825906693072/8000200207' // ✅ 正式 Android ID
-      : 'ca-app-pub-6250825906693072/1102931009') // ✅ 正式 iOS ID
+      ? 'ca-app-pub-6250825906693072/8000200207' // ✅ 正式 Android 橫幅
+      : 'ca-app-pub-6250825906693072/1102931009') // ✅ 正式 iOS 橫幅
       : (Platform.isAndroid
-      ? 'ca-app-pub-3940256099942544/6300978111' // 🧪 測試 Android ID
-      : 'ca-app-pub-3940256099942544/2934735716'); // 🧪 測試 iOS ID
+      ? 'ca-app-pub-3940256099942544/6300978111'
+      : 'ca-app-pub-3940256099942544/2934735716');
+
+  final String _interstitialAdUnitId = kReleaseMode
+      ? (Platform.isAndroid
+      ? 'ca-app-pub-6250825906693072/6233433793' // ✅ 正式 Android 插頁
+      : 'ca-app-pub-6250825906693072/9597963737') // ✅ iOS 正式 (更新這行)
+      : (Platform.isAndroid
+      ? 'ca-app-pub-3940256099942544/1033173712'
+      : 'ca-app-pub-3940256099942544/4411468910');
+
 
   Future<Map<String, dynamic>>? _trackerDataFuture;
 
@@ -82,6 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadLocalPhoto();
     _refreshData();
     _loadBannerAd(); // 🚀 啟動載入
+    _createInterstitialAd(); // 🚀 啟動時就先載入第一則
 
     // 🚀 初始化完成後執行備份檢查
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -103,6 +119,53 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _isScrolled = false);
       }
     });
+    _showWelcomeMessage();
+  }
+
+  void _showWelcomeMessage() {
+    // 取得當前 Firebase 使用者
+    final user = FirebaseAuth.instance.currentUser;
+
+    // 🚀 檢查是否為 Google 登入使用者
+    bool isGoogleUser = user?.providerData.any((p) => p.providerId == 'google.com') ?? false;
+
+    if (user != null && !user.isAnonymous) {
+      String displayName = user.displayName ?? "使用者";
+      String providerName = isGoogleUser ? "Google" : "Apple";
+
+      // 確保畫面渲染完成後才彈出 SnackBar
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  isGoogleUser ? Icons.g_mobiledata_rounded : Icons.apple_rounded,
+                  color: Colors.white,
+                  size: 30,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    "歡迎回來，$displayName！已透過 $providerName 安全登入。",
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.blue.shade700,
+            duration: const Duration(seconds: 4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: EdgeInsets.only(
+              bottom: MediaQuery.of(context).size.height * 0.1, // 🚀 避開底部的橫幅廣告
+              left: 20,
+              right: 20,
+            ),
+          ),
+        );
+      });
+    }
   }
 
   void _loadBannerAd() {
@@ -123,6 +186,53 @@ class _HomeScreenState extends State<HomeScreen> {
     )..load();
   }
 
+  void _createInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: _interstitialAdUnitId,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (InterstitialAd ad) {
+          debugPrint('🚀 插頁廣告載入成功');
+          _interstitialAd = ad;
+          _numInterstitialLoadAttempts = 0; // 重置失敗計數
+        },
+        onAdFailedToLoad: (LoadAdError error) {
+          debugPrint('❌ 插頁廣告載入失敗: ${error.message}');
+          _numInterstitialLoadAttempts++;
+          _interstitialAd = null;
+
+          // 🚀 失敗時自動重試，但最多 3 次，避免浪費手機流量
+          if (_numInterstitialLoadAttempts <= maxFailedLoadAttempts) {
+            _createInterstitialAd();
+          }
+        },
+      ),
+    );
+  }
+
+  void _showInterstitialAd() {
+    if (_interstitialAd == null) {
+      debugPrint('⚠️ 廣告尚未準備好，跳過顯示');
+      return;
+    }
+    _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+      onAdShowedFullScreenContent: (InterstitialAd ad) => debugPrint('廣告顯示中'),
+      onAdDismissedFullScreenContent: (InterstitialAd ad) {
+        debugPrint('使用者關閉廣告');
+        ad.dispose();
+        _createInterstitialAd(); // 🚀 關鍵：關閉後立刻預載下一則
+      },
+      onAdFailedToShowFullScreenContent: (InterstitialAd ad, AdError error) {
+        debugPrint('廣告顯示失敗: $error');
+        ad.dispose();
+        _createInterstitialAd();
+      },
+    );
+    _interstitialAd!.show();
+    _interstitialAd = null; // 顯示後清空
+  }
+
+
   void _refreshData() {
     setState(() {
       _trackerDataFuture = _getTrackerData();
@@ -134,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _pageController.dispose();
     _scrollController.dispose();
     _bannerAd?.dispose(); // 🚀 釋放廣告資源，避免記憶體洩漏
+    _interstitialAd?.dispose(); // 🚀 補上這行，確保插頁廣告資源也被釋放
     super.dispose();
   }
 
@@ -601,22 +712,56 @@ class _HomeScreenState extends State<HomeScreen> {
       {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '每日蕁麻疹量表', 'color': Colors.teal, 'icon': Icons.calendar_month},
       {'type': ScaleType.scorad, 'title': 'SCORAD', 'sub': '每周異膚綜合', 'color': Colors.purple, 'icon': Icons.biotech},
     ];
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GridView.builder(
-        shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 1.2),
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 1.2,
+        ),
         itemCount: scales.length,
         itemBuilder: (ctx, i) {
           final type = scales[i]['type'] as ScaleType;
           return _AnimatedScaleCard(
-            scale: scales[i], isEnabled: _enabledScales[type] ?? true, isManagementMode: _isManagementMode,
+            scale: scales[i],
+            isEnabled: _enabledScales[type] ?? true,
+            isManagementMode: _isManagementMode,
             onTap: () async {
-              if (_isManagementMode) { setState(() => _enabledScales[type] = !(_enabledScales[type] ?? true)); }
+              // 1. 管理員模式邏輯
+              if (_isManagementMode) {
+                setState(() => _enabledScales[type] = !(_enabledScales[type] ?? true));
+              }
+              // 2. 一般模式且功能開啟
               else if (_enabledScales[type] ?? true) {
-                final res = await Navigator.push<bool>(context, MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: type)));
-                if (res == true && mounted) { _refreshData(); _checkAndSilentBackup(); Future.delayed(const Duration(milliseconds: 300), () { if (mounted) _jumpToScalePage(type); }); }
-              } else { _showDisabledScaleNotice(scales[i]['title'] as String, scales[i]['sub'] as String); }
+                final res = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: type)),
+                );
+
+                // 🚀 關鍵觸發點：當使用者填完量表回到首頁時
+                if (res == true && mounted) {
+                  // 💰 彈出全螢幕插頁廣告 (這會呼叫先前建立的 _showInterstitialAd 方法)
+                  _showInterstitialAd();
+
+                  // 更新畫面上的進度數據與執行靜默備份
+                  _refreshData();
+                  _checkAndSilentBackup();
+
+                  // 視覺優化：平滑滾動至對應的進度卡片
+                  Future.delayed(const Duration(milliseconds: 300), () {
+                    if (mounted) _jumpToScalePage(type);
+                  });
+                }
+              }
+              // 3. 功能關閉時的提示
+              else {
+                _showDisabledScaleNotice(scales[i]['title'] as String, scales[i]['sub'] as String);
+              }
             },
           );
         },

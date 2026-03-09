@@ -70,7 +70,13 @@ class BackupErrorDialog extends StatelessWidget {
       content: Text(
         content.message,
         textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 15, color: Colors.black87),
+        style: TextStyle( // 🚀 關鍵：去掉 const，因為顏色現在是動態的
+          fontSize: 15,
+          // 根據深淺色模式自動切換對比顏色
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Colors.white70  // 深色模式下使用淺灰色 (提升對比度)
+              : Colors.black87, // 淺色模式下維持原本的深灰色
+        ),
       ),
       actionsAlignment: MainAxisAlignment.center,
       actionsPadding: const EdgeInsets.only(bottom: 16, left: 16, right: 16),

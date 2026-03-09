@@ -458,7 +458,17 @@ class CloudBackupService {
 
   Future<void> _uploadToDriveFile(drive.DriveApi api, File file) async {
     final name = (p.basename(file.path) == 'temp_for_upload.isar') ? _dbFileName : p.basename(file.path);
-    await _uploadToDriveRaw(api, name, await file.readAsBytes(), 'application/octet-stream');
+
+    // 🚀 優化：改用 Stream 上傳，不佔用 RAM 空間
+    final media = drive.Media(
+      file.openRead(),
+      await file.length(),
+      contentType: 'application/octet-stream',
+    );
+
+    await _deleteFromDriveIfExists(api, name);
+    final driveFile = drive.File()..name = name..parents = ['appDataFolder'];
+    await api.files.create(driveFile, uploadMedia: media);
   }
 
   Future<void> _deleteFromDriveIfExists(drive.DriveApi api, String name) async {
@@ -488,9 +498,47 @@ class CloudBackupService {
 
   BackupException _parseException(Object e) {
     if (e is BackupException) return e;
+
     final msg = e.toString().toLowerCase();
-    if (msg.contains('sign_in_failed') || msg.contains('401')) return BackupException(BackupExceptionType.permission, "帳號登入失效，請重新登入。");
-    if (msg.contains('socket') || msg.contains('network')) return BackupException(BackupExceptionType.network, "網路連線中斷");
-    return BackupException(BackupExceptionType.unknown, "處理備份失敗", e);
+    debugPrint("🚀 捕捉到原始錯誤訊息: $msg"); // 開發時建議留著，方便觀察 ClientException 的具體內容
+
+    // 1. 🚀 新增：檢測 Google Drive 空間不足 (Status 403/507 或包含 quota/insufficient)
+    if (msg.contains('insufficientstorage') ||
+        msg.contains('quota') ||
+        msg.contains('storagefull') ||
+        msg.contains('507') ||
+        (msg.contains('403') && msg.contains('limit'))) {
+      return BackupException(
+          BackupExceptionType.storage,
+          "您的雲端空間已滿，請清理 Google Drive 或 iCloud 後再試一次。",
+          e
+      );
+    }
+
+    // 2. 檢測帳號權限問題
+    if (msg.contains('sign_in_failed') ||
+        msg.contains('401') ||
+        msg.contains('unauthorized')) {
+      return BackupException(
+          BackupExceptionType.permission,
+          "帳號登入失效，請重新登入 Google 帳號。",
+          e
+      );
+    }
+
+    // 3. 處理截圖中的 ClientException
+    if (msg.contains('socket') ||
+        msg.contains('network') ||
+        msg.contains('clientexception') ||
+        msg.contains('connection failed')) {
+      return BackupException(
+          BackupExceptionType.network,
+          "網路連線不穩定，建議切換至 Wi-Fi 環境。",
+          e
+      );
+    }
+
+    // 4. 其他未知錯誤
+    return BackupException(BackupExceptionType.unknown, "處理備份時遇到非預期錯誤", e);
   }
 } // 🚀 類別正確結束位置

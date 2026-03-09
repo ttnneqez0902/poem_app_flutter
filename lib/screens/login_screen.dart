@@ -189,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         height: 1.5,
                       ),
                     ),
-                    const SizedBox(height: 60),
+                    const SizedBox(height: 50),
 
                     _buildLoginButton(
                       icon: Icons.g_mobiledata_rounded,
@@ -202,20 +202,35 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // 🚀 關鍵：自動偵測作業系統，隱藏不相容的 Apple 按鈕
-                    if (Platform.isIOS) ...[
-                      _buildLoginButton(
-                        icon: Icons.apple_rounded,
-                        iconSize: 28,
-                        label: "使用 Apple 登入",
-                        backgroundColor: isDark ? Colors.white : Colors.black,
-                        textColor: isDark ? Colors.black : Colors.white,
-                        borderColor: Colors.transparent,
-                        onPressed: _signInWithApple,
-                      ),
-                      const SizedBox(height: 16),
-                    ],
+                    // 🚀 核心修正：Android 也要顯示 Apple 登入，解決跨平台遷移問題
+                    // 且 iOS 必須顯示，否則無法通過審核
+                    _buildLoginButton(
+                      icon: Icons.apple_rounded,
+                      iconSize: 28,
+                      label: "使用 Apple 帳號登入",
+                      backgroundColor: isDark ? Colors.white : Colors.black,
+                      textColor: isDark ? Colors.black : Colors.white,
+                      borderColor: Colors.transparent,
+                      onPressed: _signInWithApple,
+                    ),
+                    const SizedBox(height: 16),
+                    const SizedBox(height: 24),
 
+                    // 分隔線效果
+                    Row(
+                      children: [
+                        Expanded(child: Divider(color: isDark ? Colors.grey.shade800 : Colors.grey.shade300)),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Text("或", style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+                        ),
+                        Expanded(child: Divider(color: isDark ? Colors.grey.shade800 : Colors.grey.shade300)),
+                      ],
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // 3. 訪客登入
                     _buildLoginButton(
                       icon: Icons.person_outline_rounded,
                       iconSize: 26,

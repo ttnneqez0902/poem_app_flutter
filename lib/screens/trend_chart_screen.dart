@@ -67,12 +67,20 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     return filtered;
   }
 
+  double _getThresholdForScale(ScaleType t) {
+    if (t == ScaleType.uas7) return 5;
+    if (t == ScaleType.adct) return 7;
+    if (t == ScaleType.poem) return 17;
+    return 25;
+  }
+
   // --- 📊 圖表配置邏輯 ---
   LineChartData _mainData(List<PoemRecord> filtered, BuildContext context) {
     if (filtered.isEmpty) return LineChartData();
 
     final startDate = filtered.first.targetDate ?? filtered.first.date!;
     final endDate = filtered.last.targetDate ?? filtered.last.date!;
+    final threshold = _getThresholdForScale(_selectedScale);
     final double rawDays = endDate.difference(startDate).inMinutes / 1440;
 
     double bottomInterval = 1.0;
@@ -91,10 +99,35 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
 
     return LineChartData(
       minX: -0.2,
-      maxX: rawDays < 0.5 ? 1.0 : rawDays + 0.5,
+      maxX: rawDays < 0.5 ? 1.0 : rawDays + 0.8,
       minY: 0,
       maxY: _getMaxYForScale(_selectedScale),
-      lineBarsData: [_getLineData(filtered, startDate)],
+
+      lineBarsData: [
+        _getLineData(filtered, startDate)
+      ],
+
+      extraLinesData: ExtraLinesData(
+        horizontalLines: [
+          HorizontalLine(
+            y: threshold,
+            color: Colors.redAccent.withOpacity(0.8),
+            strokeWidth: 2,
+            dashArray: [6, 4],
+            label: HorizontalLineLabel(
+              show: true,
+              alignment: Alignment.topRight,
+              padding: const EdgeInsets.only(right: 6, bottom: 4),
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.redAccent.withOpacity(0.8),
+                fontWeight: FontWeight.bold,
+              ),
+              labelResolver: (_) => "≥${threshold.toInt()}",
+            ),
+          ),
+        ],
+      ),
       gridData: FlGridData(
         show: true,
         drawVerticalLine: true,
@@ -108,7 +141,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
         leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: 40,
+              reservedSize: 44,
               interval: _getIntervalForScale(_selectedScale),
               // 🚀 Y軸數字顏色適配
               getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: TextStyle(color: textColor, fontSize: 12)),
@@ -117,7 +150,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
         bottomTitles: AxisTitles(
             sideTitles: SideTitles(
                 showTitles: true,
-                reservedSize: 40,
+                reservedSize: 44,
                 interval: bottomInterval,
                 getTitlesWidget: (v, m) {
                   if (v < 0 || v > rawDays + 0.1) return const SizedBox.shrink();
@@ -174,14 +207,17 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
               if (delta >= _flareThreshold) isFlare = true;
             }
             return FlDotCirclePainter(
-                radius: isFlare ? 7 : 4,
+                radius: isFlare ? 6 : 4,
                 color: isFlare ? Colors.redAccent : color,
                 strokeWidth: 2,
                 strokeColor: Colors.white
             );
           }
       ),
-      belowBarData: BarAreaData(show: true, color: color.withOpacity(0.05)),
+      belowBarData: BarAreaData(
+        show: true,
+        color: color.withOpacity(0.08),
+      ),
     );
   }
 
@@ -213,7 +249,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
 
                 // 🚀 圖表區塊
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 32, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                   child: RepaintBoundary(
                     key: _chartKey,
                     child: Container(
@@ -223,7 +259,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                         color: Theme.of(context).cardColor,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      padding: const EdgeInsets.only(top: 16, right: 16), // 內縮避免圖表貼邊
+                      padding: const EdgeInsets.fromLTRB(8, 16, 24, 0), // 內縮避免圖表貼邊
                       child: filtered.isEmpty
                           ? const Center(child: Text("目前無檢測紀錄", style: TextStyle(color: Colors.grey)))
                       // 🚀 3. 將 context 傳入 _mainData
@@ -311,7 +347,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
             }
           },
           icon: const Icon(Icons.picture_as_pdf_rounded, size: 34),
-          label: const Text("導出專業臨床報告", style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
+          label: const Text("導出專業臨床報告", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.indigo.shade700,
             foregroundColor: Colors.white,
@@ -339,7 +375,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
         Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Text(
-              "${DateFormat('MM/dd').format(firstDisplayDate!)} – ${DateFormat('MM/dd').format(lastDisplayDate!)}",
+              "${DateFormat('MM/dd').format(firstDisplayDate!)} – ${DateFormat('MM/dd').format(lastDisplayDate!)}  (≥${_getThresholdForScale(_selectedScale).toInt()})",
               style: const TextStyle(fontSize: 16, color: Colors.grey)
           ),
         ),
@@ -371,27 +407,79 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   }
 
   Widget _buildSeverityLegend() {
-    String text = "";
-    Color color = Colors.orange;
 
-    if (_selectedScale == ScaleType.adct) {
-      text = "控制不佳 (≥ 7 分)";
-      color = Colors.red;
-    } else if (_selectedScale == ScaleType.uas7) {
-      text = "高度活性 (每日 ≥ 5 分)";
-      color = Colors.orange;
-    } else {
-      text = "重度病灶 (≥ 17 分)";
-      color = Colors.redAccent;
+    final threshold = _getThresholdForScale(_selectedScale);
+    final lineColor = _getLineColor(_selectedScale);
+
+    String label;
+
+    switch (_selectedScale) {
+      case ScaleType.uas7:
+        label = "UAS7 臨床警戒";
+        break;
+
+      case ScaleType.adct:
+        label = "ADCT 控制不佳";
+        break;
+
+      case ScaleType.poem:
+        label = "POEM 重度";
+        break;
+
+      default:
+        label = "SCORAD 重度";
     }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Row(children: [
-        Container(width: 14, height: 14, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
-        const SizedBox(width: 10),
-        Text("臨床警戒：$text", style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.grey)) // 🚀 改為 Colors.grey 更柔和
-      ]),
+      child: Row(
+        children: [
+
+          /// 趨勢線
+          Container(
+            width: 20,
+            height: 4,
+            color: lineColor,
+          ),
+
+          const SizedBox(width: 8),
+
+          const Text(
+            "趨勢",
+            style: TextStyle(fontSize: 13),
+          ),
+
+          const SizedBox(width: 20),
+
+          /// 警戒線
+          Row(
+            children: List.generate(
+              6,
+                  (i) => Container(
+                width: 3,
+                height: 4,
+                margin: const EdgeInsets.only(right: 2),
+                color: Colors.redAccent.withOpacity(0.8),
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 8),
+
+          Expanded(
+            child: Text(
+              "$label ≥ ${threshold.toInt()}",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

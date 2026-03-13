@@ -107,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
           handleNotificationJump(pendingPayload!);
           pendingPayload = null;
         }
+        _showWelcomeMessage();
       }
     });
 
@@ -119,56 +120,64 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _isScrolled = false);
       }
     });
-    _showWelcomeMessage();
   }
 
-  void _showWelcomeMessage() {
-    // 取得當前 Firebase 使用者
+  // 🚀 核心修正：加入 SharedPreferences 判斷，確保只顯示一次
+  Future<void> _showWelcomeMessage() async {
     final user = FirebaseAuth.instance.currentUser;
+    // 訪客模式或未登入則不顯示
+    if (user == null || user.isAnonymous) return;
 
-    // 🚀 檢查是否為 Google 登入使用者
-    bool isGoogleUser = user?.providerData.any((p) => p.providerId == 'google.com') ?? false;
+    final prefs = await SharedPreferences.getInstance();
+    // 使用 UID 建立專屬標記，避免不同帳號切換時出錯
+    String welcomeKey = 'has_shown_welcome_${user.uid}';
+    bool hasShown = prefs.getBool(welcomeKey) ?? false;
 
-    if (user != null && !user.isAnonymous) {
+    if (!hasShown) {
+      bool isGoogleUser = user.providerData.any((p) => p.providerId == 'google.com');
       String displayName = user.displayName ?? "使用者";
       String providerName = isGoogleUser ? "Google" : "Apple";
 
-      // 確保畫面渲染完成後才彈出 SnackBar
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(
-                  isGoogleUser ? Icons.g_mobiledata_rounded : Icons.apple_rounded,
-                  color: Colors.white,
-                  size: 30,
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                isGoogleUser ? Icons.g_mobiledata_rounded : Icons.apple_rounded,
+                color: Colors.white,
+                size: 30,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  "歡迎回來，$displayName！已透過 $providerName 安全登入。",
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    "歡迎回來，$displayName！已透過 $providerName 安全登入。",
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.blue.shade700,
-            duration: const Duration(seconds: 4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: EdgeInsets.only(
-              bottom: MediaQuery.of(context).size.height * 0.1, // 🚀 避開底部的橫幅廣告
-              left: 20,
-              right: 20,
-            ),
+              ),
+            ],
           ),
-        );
-      });
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.blue.shade700,
+          duration: const Duration(seconds: 4),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: EdgeInsets.only(
+            bottom: MediaQuery.of(context).size.height * 0.1, // 🚀 避開底部廣告區域
+            left: 20,
+            right: 20,
+          ),
+        ),
+      );
+
+      // 儲存標記，下次進入 initState 時就不會再彈出
+      await prefs.setBool(welcomeKey, true);
     }
   }
 
   void _loadBannerAd() {
+    _bannerAd?.dispose();
+
     _bannerAd = BannerAd(
       adUnitId: _adUnitId,
       request: const AdRequest(),
@@ -178,10 +187,13 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() => _isAdLoaded = true);
           debugPrint('廣告載入成功');
         },
-        onAdFailedToLoad: (ad, err) {
-          ad.dispose();
-          debugPrint('廣告載入失敗: ${err.message}');
-        },
+          onAdFailedToLoad: (ad, err) {
+            ad.dispose();
+            debugPrint('廣告載入失敗: ${err.message}');
+            Future.delayed(const Duration(seconds: 30), () {
+              if (mounted) _loadBannerAd();
+            });
+          }
       ),
     )..load();
   }
@@ -193,8 +205,11 @@ class _HomeScreenState extends State<HomeScreen> {
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (InterstitialAd ad) {
           debugPrint('🚀 插頁廣告載入成功');
+
+          _interstitialAd?.dispose();
           _interstitialAd = ad;
-          _numInterstitialLoadAttempts = 0; // 重置失敗計數
+
+          _numInterstitialLoadAttempts = 0;
         },
         onAdFailedToLoad: (LoadAdError error) {
           debugPrint('❌ 插頁廣告載入失敗: ${error.message}');
@@ -373,15 +388,49 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleLogout(BuildContext context) async {
+    // 1. 顯示確認對話框
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(title: const Text("確認登出"), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")), TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("登出", style: TextStyle(color: Colors.red)))]),
+      builder: (ctx) => AlertDialog(
+        title: const Text("確認登出"),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("取消")
+          ),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("登出", style: TextStyle(color: Colors.red))
+          ),
+        ],
+      ),
     );
+
     if (confirm == true) {
-      await FirebaseAuth.instance.signOut();
-      await GoogleSignIn().signOut();
-      if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (ctx) => const LoginScreen()), (route) => false);
+      try {
+        // 🚀 2. 取得當前使用者 UID 並清除「已顯示歡迎詞」的標記
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          final prefs = await SharedPreferences.getInstance();
+          // 刪除該帳號專屬的歡迎標記
+          await prefs.remove('has_shown_welcome_${user.uid}');
+        }
+
+        // 3. 執行 Firebase 與 Google 登出
+        await FirebaseAuth.instance.signOut();
+        await GoogleSignIn().signOut();
+
+        // 4. 確保 Context 仍然有效後再進行頁面跳轉
+        if (!context.mounted) return;
+
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (ctx) => const LoginScreen()),
+              (route) => false,
+        );
+      } catch (e) {
+        debugPrint("登出過程發生錯誤: $e");
+        // 視需求可以在此處加入 SnackBar 提示使用者
+      }
     }
   }
 
@@ -401,7 +450,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final double topPadding = MediaQuery.of(context).padding.top;
 
     ImageProvider? avatarImage;
     if (_localPhotoPath != null && File(_localPhotoPath!).existsSync()) {
@@ -415,11 +463,13 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Scaffold(
         extendBodyBehindAppBar: false,
         appBar: AppBar(
+          centerTitle: false,
           toolbarHeight: 80,
           automaticallyImplyLeading: false,
           titleSpacing: 0,
           backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          elevation: _isScrolled ? 2 : 0,
+          elevation: _isScrolled ? 3 : 0,
+          surfaceTintColor: Colors.transparent,
           shadowColor: Colors.black.withOpacity(0.1),
           title: Container(
             height: 75,
@@ -647,7 +697,7 @@ class _HomeScreenState extends State<HomeScreen> {
             // 2. 固定廣告區：放在 Expanded 之外，它就會永遠「貼」在螢幕最下方
             if (_isAdLoaded && _bannerAd != null)
               Container(
-                color: isDarkMode ? Colors.black : Colors.white, // 確保背景色與主題一致
+                color: Theme.of(context).scaffoldBackgroundColor,
                 padding: EdgeInsets.only(
                   top: 8,
                   bottom: MediaQuery.of(context).padding.bottom + 8, // 🚀 自動避開 iPhone 底部的白條
@@ -671,12 +721,40 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _checkBackupRequirement() async {
     final prefs = await SharedPreferences.getInstance();
     final lastBackupStr = prefs.getString('last_backup_time');
+    final lastHintShowStr = prefs.getString('last_hint_show_time'); // 🚀 新增提示紀錄
     final recentRecords = await isarService.getRecordsCountInLastDays(28);
-    if (lastBackupStr == null && recentRecords > 0) {
-      _showBackupHint();
-    } else if (lastBackupStr != null) {
-      final days = DateTime.now().difference(DateTime.parse(lastBackupStr)).inDays;
-      if (days >= 28 && recentRecords > 0) _showBackupHint();
+
+    bool needsBackup = false;
+    DateTime now = DateTime.now();
+
+    // A. 判斷是否有資料且很久沒備份
+    if (recentRecords > 0) {
+      if (lastBackupStr == null) {
+        needsBackup = true;
+      } else {
+        DateTime? lastBackup = DateTime.tryParse(lastBackupStr);
+        if (lastBackup == null || now.difference(lastBackup).inDays >= 28) {
+          needsBackup = true;
+        }
+      }
+    }
+
+    // B. 如果需要備份，檢查是否「已間隔 4 週」才提示下一次
+    if (needsBackup) {
+      bool shouldShowHint = true;
+      if (lastHintShowStr != null) {
+        DateTime? lastHint = DateTime.tryParse(lastHintShowStr);
+        // 🚀 關鍵：如果距離上次提示不到 28 天，就先保持安靜
+        if (lastHint != null && now.difference(lastHint).inDays < 28) {
+          shouldShowHint = false;
+        }
+      }
+
+      if (shouldShowHint) {
+        _showBackupHint();
+        // 🚀 紀錄這次顯示提示的時間，確保 4 週內不會再 show 第二次
+        await prefs.setString('last_hint_show_time', now.toIso8601String());
+      }
     }
   }
 
@@ -706,7 +784,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildScaleGrid(BuildContext context) {
-    final scales = [
+    const List<Map<String, dynamic>> scales = [
       {'type': ScaleType.adct, 'title': 'ADCT', 'sub': '每周異膚控制', 'color': Colors.blue, 'icon': Icons.assignment_turned_in},
       {'type': ScaleType.poem, 'title': 'POEM', 'sub': '每周濕疹檢測', 'color': Colors.orange, 'icon': Icons.opacity},
       {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '每日蕁麻疹量表', 'color': Colors.teal, 'icon': Icons.calendar_month},
@@ -822,9 +900,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildProgressSwiper() {
     final enabledTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
     if (enabledTypes.isEmpty) return const SizedBox.shrink();
+
     return Column(children: [
-      SizedBox(height: 295, child: FutureBuilder<Map<String, dynamic>>(future: _trackerDataFuture, builder: (ctx, snapshot) {
+      SizedBox(height: 295, child: FutureBuilder<Map<String, dynamic>>(future: _trackerDataFuture ?? _getTrackerData(), builder: (ctx, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.hasError) {
+          return const Center(child: Text("資料載入失敗"));
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
         final data = snapshot.data!;
         return PageView.builder(controller: _pageController, itemCount: _virtualTotalCount, itemBuilder: (ctx, i) => _buildCardByType(enabledTypes[i % enabledTypes.length], data));
       })),
@@ -855,10 +942,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _jumpToScalePage(ScaleType type) {
     if (!_pageController.hasClients) return;
-    final enabled = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
-    int target = enabled.indexOf(type); if (target == -1) return;
-    int current = _pageController.page!.round();
-    _pageController.animateToPage(current + (target - (current % enabled.length)), duration: const Duration(milliseconds: 500), curve: Curves.easeInOutCubic);
+
+    final enabled =
+    ScaleType.values.where((t) => _enabledScales[t] == true).toList();
+
+    int target = enabled.indexOf(type);
+    if (target == -1) return;
+
+    final page = _pageController.page ?? _pageController.initialPage.toDouble();
+    int current = page.round();
+
+    _pageController.animateToPage(
+      current + (target - (current % enabled.length)),
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOutCubic,
+    );
   }
 }
 

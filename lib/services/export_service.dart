@@ -95,20 +95,36 @@ class ExportService {
     'note': isEn ? "Clinical Notes" : "臨床紀錄",
   };
 
+  // 🚀 [核心改動 1]：自動根據量表類型返回對應的臨床配置
+  static ClinicalReportConfig _getConfigForScale(ScaleType type) {
+    switch (type) {
+      case ScaleType.adct:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 5, streakThreshold: 2, streakTotalIncrease: 4);
+      case ScaleType.uas7:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 11, streakThreshold: 3, streakTotalIncrease: 9);
+      case ScaleType.scorad:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 18, streakThreshold: 3, streakTotalIncrease: 15);
+      case ScaleType.poem:
+      default:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 7, streakThreshold: 3, streakTotalIncrease: 6);
+    }
+  }
 
   static Future<void> generateClinicalReport(
       List<PoemRecord> records,
       Uint8List? chartImageBytes,
       ScaleType targetScale, {
-        ClinicalReportConfig config = const ClinicalReportConfig(),
+        ClinicalReportConfig? config, // 改為可選
         bool isEnglish = false,
       }) async {
     // 🚀 整體包覆 try-catch，確保任何資源加載或渲染錯誤不會導致 App 閃退
     try {
+      // 🚀 [核心改動 2]：優先使用傳入的 config，若無則自動匹配
+      final activeConfig = config ?? _getConfigForScale(targetScale); // 🚀 自動選取配置
+
       final labels = _getLabels(isEnglish);
       final dateFmt = isEnglish ? 'MMM dd, yyyy' : 'yyyy/MM/dd';
 
-      // 1. 數據清洗：過濾無效分數與日期，並按時間排序
       final validRecords = records.where((r) =>
       (r.targetDate ?? r.date) != null &&
           r.scaleType == targetScale &&
@@ -117,18 +133,19 @@ class ExportService {
 
       if (validRecords.isEmpty) return;
 
-      validRecords.sort((a, b) =>
-          (a.targetDate ?? a.date!).compareTo((b.targetDate ?? b.date!)));
+      validRecords.sort((a, b) => (a.targetDate ?? a.date!).compareTo((b.targetDate ?? b.date!)));
 
-      // 取最近 28 天數據用於趨勢分析
       final recentRecords = validRecords.where((r) =>
-          (r.targetDate ?? r.date!).isAfter(
-              DateTime.now().subtract(const Duration(days: 28)))
+          (r.targetDate ?? r.date!).isAfter(DateTime.now().subtract(const Duration(days: 28)))
       ).toList();
 
-      // 2. 臨床分析運算
-      final trend = _analyzeTrend(recentRecords.isEmpty ? validRecords : recentRecords, labels);
-      final alerts = _calculateAlerts(validRecords, config);
+      // 🚀 [核心改動 3]：傳入 targetScale 給分析方法
+      final trend = _analyzeTrend(
+          recentRecords.isEmpty ? validRecords : recentRecords,
+          labels,
+          targetScale // 👈 補上這個參數
+      );
+      final alerts = _calculateAlerts(validRecords, activeConfig);
       final cvText = recentRecords.length >= 3
           ? "${_calculateCV(recentRecords).toStringAsFixed(1)}%"
           : labels['insufficient']!;
@@ -167,7 +184,7 @@ class ExportService {
               _coverField(labels['obs_period']!,
                   "${DateFormat(dateFmt).format(validRecords.first.targetDate ?? validRecords.first.date!)} - ${DateFormat(dateFmt).format(validRecords.last.targetDate ?? validRecords.last.date!)}"),
               pw.Spacer(flex: 1),
-              _buildTrendSummary(targetScale, trend, cvText, alerts, config, recentRecords.length, labels, isEnglish),
+              _buildTrendSummary(targetScale, trend, cvText, alerts, activeConfig, recentRecords.length, labels, isEnglish),
               pw.Spacer(flex: 3),
               _buildDisclaimerBox(labels['clinical_alert']!, scaleMeta['disclaimer']!),
             ],
@@ -214,7 +231,7 @@ class ExportService {
         header: (context) => _buildPdfHeader("${scaleMeta['title']} Appendix", context),
         build: (context) => [
           // 使用專屬 Helper 建立附錄內容，傳入快取的數學字體以渲染公式符號
-          ...PdfAppendixHelper.buildAppendix(targetScale, config, _cachedMathFont!),
+          ...PdfAppendixHelper.buildAppendix(targetScale, activeConfig, _cachedMathFont!),
           pw.SizedBox(height: 20),
           pw.Divider(color: PdfColors.grey600),
           pw.Align(
@@ -244,15 +261,21 @@ class ExportService {
 
   // --- 運算邏輯 ---
 
-  static ScoreTrend _analyzeTrend(List<PoemRecord> sorted, Map<String, String> labels) {
+// 🚀 [核心改動 4]：修正方法簽名，加入 ScaleType type
+  // 🚀 修正 1：補上 ScaleType type 參數定義
+  static ScoreTrend _analyzeTrend(List<PoemRecord> sorted, Map<String, String> labels, ScaleType type) {
     if (sorted.length < 2) return ScoreTrend(labelKey: 'none', displayLabel: labels['insufficient']!, delta: 0, changeRate: 0, slope: 0);
+
     final scores = sorted.map((e) => (e.score ?? 0).toDouble()).toList();
     final mid = scores.length ~/ 2;
     final firstAvg = scores.sublist(0, mid).reduce((a, b) => a + b) / mid;
     final secondAvg = scores.sublist(mid).reduce((a, b) => a + b) / (scores.length - mid);
 
     final firstDate = sorted.first.targetDate ?? sorted.first.date!;
+
+    // 🚀 修正 2：補上 xs 的計算，這對斜率運算至關重要
     final xs = sorted.map((r) => (r.targetDate ?? r.date!).difference(firstDate).inDays.toDouble()).toList();
+
     final double mx = xs.reduce((a, b) => a + b) / xs.length;
     final double my = scores.reduce((a, b) => a + b) / scores.length;
     double num = 0, den = 0;
@@ -261,7 +284,11 @@ class ExportService {
       den += pow(xs[i] - mx, 2);
     }
     final slope = den == 0 ? 0.0 : num / den;
-    String key = (slope >= 0.1) ? 'worsening' : (slope <= -0.1 ? 'improving' : 'stable');
+    // 🚀 根據量表總分調整斜率門檻
+    double worseningThreshold = 0.1;
+    if (type == ScaleType.scorad) worseningThreshold = 0.3; // SCORAD 需更顯著的斜率才算惡化
+
+    String key = (slope >= worseningThreshold) ? 'worsening' : (slope <= -worseningThreshold ? 'improving' : 'stable');
 
     return ScoreTrend(labelKey: key, displayLabel: labels[key]!, delta: secondAvg - firstAvg, changeRate: firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg) * 100 : 0, slope: slope);
   }
@@ -325,10 +352,15 @@ class ExportService {
           pw.Text("${labels['sample_size']}: $n", style: const pw.TextStyle(fontSize: 10)),
         ]),
         pw.Divider(color: PdfColors.blue200),
-        _trendRow(labels['score_trend']!, "${t.displayLabel} (Slope: ${t.slope.toStringAsFixed(2)})", valueColor: t.labelKey == 'worsening' ? PdfColors.red700 : (t.labelKey == 'improving' ? PdfColors.green700 : null)),
+        _trendRow(labels['score_trend']!, "${t.displayLabel} (Slope: ${t.slope.toStringAsFixed(2)} /day)", valueColor: t.labelKey == 'worsening' ? PdfColors.red700 : (t.labelKey == 'improving' ? PdfColors.green700 : null)),
         _trendRow(labels['change_mag']!, "${t.delta > 0 ? '↑ +' : '↓ '}${t.delta.toStringAsFixed(1)} pts (${t.changeRate.toStringAsFixed(1)}%)"),
         _trendRow(labels['cv']!, cv),
+        _trendRow(
+          isEn ? "Clinical Threshold" : "臨床警戒值",
+            "≥ ${_getClinicalThreshold(type)} pts"
+        ),
         _trendRow(labels['rapid_event']!, "${alerts.rapidCount} ${isEn ? 'Events' : '次'} (Limit: ${c.rapidIncreaseThreshold})"),
+
         if (alerts.isStreakDetected)
           pw.Container(
             margin: const pw.EdgeInsets.only(top: 8), padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -337,6 +369,21 @@ class ExportService {
           ),
       ]),
     );
+  }
+
+  static int _getClinicalThreshold(ScaleType t) {
+    switch (t) {
+      case ScaleType.uas7:
+        return 5;
+      case ScaleType.adct:
+        return 7;
+      case ScaleType.poem:
+        return 17;
+      case ScaleType.scorad:
+        return 25;
+      default:
+        return 0;
+    }
   }
 
   static pw.Widget _buildWeeklyTable(List<WeeklyStat> stats, Map<String, String> labels) {
@@ -434,7 +481,13 @@ class ExportService {
   static Map<String, String> _getScaleMetadata(ScaleType t, bool isEn) {
     switch (t) {
       case ScaleType.adct: return {'title': 'ADCT', 'full_name': isEn ? 'ADCT: Atopic Dermatitis Control Tool' : 'ADCT 每周異膚控制量表', 'disclaimer': isEn ? 'Clinical alert threshold is 7 points.' : '臨床研究顯示 7 分為病情未控制之警示切點。'};
-      case ScaleType.uas7: return {'title': 'UAS7', 'full_name': isEn ? 'UAS7: Urticaria Activity Score' : 'UAS7 每日蕁麻疹活性量表', 'disclaimer': isEn ? 'Weekly total > 28 suggests severe activity.' : '週總分超過 28 分通常代表疾病活性處於重度狀態。'};
+      case ScaleType.uas7: return {'title': 'UAS7', 'full_name': isEn ? 'UAS7: Urticaria Activity Score' : 'UAS7 每日蕁麻疹活性量表', 'disclaimer': isEn ? 'Weekly total ≥ 28 indicates severe urticaria activity.' : '週總分 ≥ 28 分通常代表蕁麻疹處於高度疾病活性狀態。'};
+      case ScaleType.scorad:
+        return {
+          'title': 'SCORAD',
+          'full_name': isEn ? 'SCORAD: Scoring Atopic Dermatitis' : 'SCORAD 異膚綜合嚴重程度評分',
+          'disclaimer': isEn ? 'Total > 50 indicates severe disease.' : '臨床上總分超過 50 分代表目前處於重度異位性皮膚炎狀態。'
+        };
       default: return {'title': 'POEM', 'full_name': isEn ? 'POEM: Patient-Oriented Eczema Measure' : 'POEM 每周濕疹檢測量表', 'disclaimer': isEn ? 'Total > 16 indicates severe eczema.' : '總分超過 16 分代表目前處於重度濕疹病灶。'};
     }
   }

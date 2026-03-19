@@ -6,7 +6,6 @@ import 'package:intl/date_symbol_data_local.dart'; // 🚀 補上這行
 import 'package:google_mobile_ads/google_mobile_ads.dart'; // 🚀 補上這一行
 
 import 'dart:io';
-import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 
 import 'firebase_options.dart';
 
@@ -53,49 +52,51 @@ void handleNotificationJump(String payload) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // 🚀 2. 處理 iOS 廣告追蹤權限 (放在 MobileAds 初始化之前)
-  if (Platform.isIOS) {
-    // 稍微延遲一下，確保 App UI 已準備好顯示權限視窗
-    await Future.delayed(const Duration(milliseconds: 1000));
-    final status = await AppTrackingTransparency.trackingAuthorizationStatus;
-    if (status == TrackingStatus.notDetermined) {
-      await AppTrackingTransparency.requestTrackingAuthorization();
-    }
-  }
 
-  // 🚀 核心：這行沒加的話，廣告絕對跑不出來
-  await MobileAds.instance.initialize();
-
-  // 🚀 關鍵修正：載入中文日期格式字典，這樣 HistoryListScreen 才能顯示 (週一)
-  await initializeDateFormatting('zh_TW', null);
-
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await isarService.init();
-
-  // 🚀 3. 修改 init：如果在背景就直接跳，如果還在開機就先記在 pendingPayload
-  await notificationService.init(
-      onPayloadReceived: (String? payload) {
-        if (payload == null) return;
-        if (navigatorKey.currentState?.overlay != null) {
-          handleNotificationJump(payload); // App 已經在畫面上了，直接跳
-        } else {
-          pendingPayload = payload; // App 還在冷啟動，先記下來
-        }
-      }
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // 🚀 4. 檢查是否是「點擊通知才喚醒 App」的冷啟動
-  final coldPayload = await notificationService.getColdStartPayload();
-  if (coldPayload != null) {
-    pendingPayload = coldPayload;
+  await _initServices();
+
+  runApp(const MyApp()); // ✅ 必須有
+}
+
+Future<void> _initServices() async {
+  try {
+    await MobileAds.instance.initialize();
+
+    await initializeDateFormatting('zh_TW', null);
+
+    await isarService.init();
+
+    await notificationService.init(
+      onPayloadReceived: (payload) {
+        if (payload == null) return;
+
+        if (navigatorKey.currentState?.overlay != null) {
+          handleNotificationJump(payload);
+        } else {
+          pendingPayload = payload;
+        }
+      },
+    );
+
+    await notificationService.requestPermissions();
+
+    final coldPayload =
+    await notificationService.getColdStartPayload();
+
+    if (coldPayload != null) {
+      pendingPayload = coldPayload;
+    }
+
+   // bootstrapController.start();
+
+    debugPrint("🚀 Services initialized");
+  } catch (e) {
+    debugPrint("❌ Service init error: $e");
   }
-
-  await notificationService.requestPermissions();
-  WidgetsBinding.instance.addObserver(appLifecycleHandler);
-  bootstrapController.start();
-
-  runApp(const MyApp()); // 🚀 補上右括號與分號
-  debugPrint("🚀 App Boot Completed");
 }
 
 
@@ -214,8 +215,23 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class BootstrapScreen extends StatelessWidget {
+class BootstrapScreen extends StatefulWidget {
   const BootstrapScreen({super.key});
+
+  @override
+  State<BootstrapScreen> createState() => _BootstrapScreenState();
+}
+
+class _BootstrapScreenState extends State<BootstrapScreen> {
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      bootstrapController.start(); // ✅ 放這裡
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -226,13 +242,11 @@ class BootstrapScreen extends StatelessWidget {
         bootstrapController.needsConsent,
       ]),
       builder: (context, _) {
-        if (bootstrapController.stage.value ==
-            BootStage.ready) {
+        if (bootstrapController.stage.value == BootStage.ready) {
           return const AuthGate();
         }
 
-        if (bootstrapController.error.value !=
-            BootstrapError.none) {
+        if (bootstrapController.error.value != BootstrapError.none) {
           return _buildErrorUI();
         }
 
@@ -249,8 +263,7 @@ class BootstrapScreen extends StatelessWidget {
     return Scaffold(
       body: Center(
         child: Padding(
-          padding:
-          const EdgeInsets.symmetric(horizontal: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 40),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -268,8 +281,7 @@ class BootstrapScreen extends StatelessWidget {
               const SizedBox(height: 16),
               const Text(
                 "臨床引擎啟動中...",
-                style:
-                TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -282,22 +294,17 @@ class BootstrapScreen extends StatelessWidget {
     return Scaffold(
       body: Center(
         child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error,
-                color: Colors.red, size: 60),
+            const Icon(Icons.error, color: Colors.red, size: 60),
             const SizedBox(height: 16),
             ValueListenableBuilder<String>(
-              valueListenable:
-              bootstrapController.errorMessage,
-              builder: (context, message, _) =>
-                  Text(message),
+              valueListenable: bootstrapController.errorMessage,
+              builder: (context, message, _) => Text(message),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: () =>
-                  bootstrapController.start(),
+              onPressed: () => bootstrapController.start(),
               child: const Text("重試"),
             ),
           ],

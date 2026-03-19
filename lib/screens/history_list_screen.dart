@@ -3,25 +3,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/poem_record.dart';
+import '../models/scale_config.dart';
 import '../main.dart';
 import '../services/export_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'poem_survey_screen.dart';
 
-enum HistoryViewFilter { all, adct, poem, uas7, scorad }
-
 class HistoryListScreen extends StatefulWidget {
-  const HistoryListScreen({super.key});
+  final AppCategory currentCategory;
+
+  const HistoryListScreen({
+    super.key,
+    required this.currentCategory,
+  });
 
   @override
   State<HistoryListScreen> createState() => _HistoryListScreenState();
 }
 
 class _HistoryListScreenState extends State<HistoryListScreen> {
-  HistoryViewFilter _selectedFilter = HistoryViewFilter.all;
+  ScaleType? _selectedScaleType;
   Map<ScaleType, bool> _enabledScales = {};
-
-  void _refresh() => setState(() {});
 
   @override
   void initState() {
@@ -35,27 +37,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     for (var type in ScaleType.values) {
       tempSettings[type] = prefs.getBool('enable_${type.name}') ?? true;
     }
-
-    setState(() {
-      _enabledScales = tempSettings;
-      if (_selectedFilter != HistoryViewFilter.all) {
-        ScaleType? currentType = _getScaleTypeFromFilter(_selectedFilter);
-        if (currentType != null && !(_enabledScales[currentType] ?? true)) {
-          _selectedFilter = HistoryViewFilter.all;
-        }
-      }
-    });
+    setState(() => _enabledScales = tempSettings);
   }
 
-  ScaleType? _getScaleTypeFromFilter(HistoryViewFilter filter) {
-    switch (filter) {
-      case HistoryViewFilter.adct: return ScaleType.adct;
-      case HistoryViewFilter.poem: return ScaleType.poem;
-      case HistoryViewFilter.uas7: return ScaleType.uas7;
-      case HistoryViewFilter.scorad: return ScaleType.scorad;
-      default: return null;
-    }
-  }
+  void _refresh() => setState(() {});
 
   @override
   Widget build(BuildContext context) {
@@ -66,7 +51,8 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("臨床檢測紀錄", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text("${_getCategoryName(widget.currentCategory)} 歷史紀錄",
+            style: const TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: isDarkMode ? null : Colors.blue.shade50,
         elevation: 0,
@@ -74,8 +60,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       backgroundColor: isDarkMode ? null : Colors.grey.shade50,
       body: Column(
         children: [
-          _buildUnifiedFilterChips(),
-
+          _buildDynamicFilterChips(),
           Expanded(
             child: FutureBuilder<List<PoemRecord>>(
               future: isarService.getAllRecords(),
@@ -87,24 +72,14 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                 final allRecords = snapshot.data ?? [];
 
                 final filteredRecords = allRecords.where((r) {
-                  if (r.type == RecordType.daily) return false;
-                  bool isScaleEnabled = _enabledScales[r.scaleType] ?? true;
-                  if (!isScaleEnabled) return false;
-
-                  switch (_selectedFilter) {
-                    case HistoryViewFilter.all: return true;
-                    case HistoryViewFilter.adct: return r.scaleType == ScaleType.adct;
-                    case HistoryViewFilter.poem: return r.scaleType == ScaleType.poem;
-                    case HistoryViewFilter.uas7: return r.scaleType == ScaleType.uas7;
-                    case HistoryViewFilter.scorad: return r.scaleType == ScaleType.scorad;
-                  }
+                  if (!_isScaleInCategory(r.scaleType, widget.currentCategory)) return false;
+                  if (!(_enabledScales[r.scaleType] ?? true)) return false;
+                  if (_selectedScaleType != null && r.scaleType != _selectedScaleType) return false;
+                  return true;
                 }).toList();
 
-                filteredRecords.sort((a, b) {
-                  final dateA = a.targetDate ?? a.date ?? DateTime.now();
-                  final dateB = b.targetDate ?? b.date ?? DateTime.now();
-                  return dateB.compareTo(dateA);
-                });
+                filteredRecords.sort((a, b) => (b.targetDate ?? b.date ?? DateTime.now())
+                    .compareTo(a.targetDate ?? a.date ?? DateTime.now()));
 
                 if (filteredRecords.isEmpty) return _buildEmptyState();
 
@@ -121,7 +96,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     );
   }
 
-  Widget _buildUnifiedFilterChips() {
+  Widget _buildDynamicFilterChips() {
+    final availableScales = ScaleType.values.where((t) =>
+    _isScaleInCategory(t, widget.currentCategory) && (_enabledScales[t] ?? true)).toList();
+
     return Container(
       color: Theme.of(context).brightness == Brightness.dark ? null : Colors.blue.shade50,
       padding: const EdgeInsets.only(bottom: 12),
@@ -130,31 +108,19 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           children: [
-            _buildSingleChip("全部", HistoryViewFilter.all),
-            if (_enabledScales[ScaleType.adct] ?? true) ...[
-              const SizedBox(width: 8),
-              _buildSingleChip("ADCT 異膚", HistoryViewFilter.adct),
-            ],
-            if (_enabledScales[ScaleType.poem] ?? true) ...[
-              const SizedBox(width: 8),
-              _buildSingleChip("POEM 濕疹", HistoryViewFilter.poem),
-            ],
-            if (_enabledScales[ScaleType.uas7] ?? true) ...[
-              const SizedBox(width: 8),
-              _buildSingleChip("UAS7 蕁麻疹", HistoryViewFilter.uas7),
-            ],
-            if (_enabledScales[ScaleType.scorad] ?? true) ...[
-              const SizedBox(width: 8),
-              _buildSingleChip("SCORAD 異膚", HistoryViewFilter.scorad),
-            ],
+            _buildSingleChip("全部", null),
+            ...availableScales.map((type) => Padding(
+              padding: const EdgeInsets.only(left: 8.0),
+              child: _buildSingleChip(ScaleConfig.allScales[type]?.title ?? type.name, type),
+            )),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSingleChip(String label, HistoryViewFilter filter) {
-    bool isSelected = _selectedFilter == filter;
+  Widget _buildSingleChip(String label, ScaleType? type) {
+    bool isSelected = _selectedScaleType == type;
     return FilterChip(
       label: Text(label, style: TextStyle(
         fontSize: 15,
@@ -162,7 +128,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
       )),
       selected: isSelected,
-      onSelected: (val) { if (val) setState(() => _selectedFilter = filter); },
+      onSelected: (val) {
+        setState(() => _selectedScaleType = type);
+        HapticFeedback.lightImpact();
+      },
       backgroundColor: Colors.white,
       selectedColor: Colors.blue.shade100,
       checkmarkColor: Colors.blue.shade900,
@@ -173,133 +142,114 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     );
   }
 
-  // --- 🎨 紀錄卡片：進化加入 Dismissible 與 人性化日期 ---
   Widget _buildRecordCard(BuildContext context, PoemRecord record) {
-    final Color iconColor = _getSeverityColor(record);
-    final IconData iconData = _getScaleIcon(record.scaleType);
+    // 🚀 核心優化：直接從 Model 抓取顏色與判讀標籤
+    final Color statusColor = record.severityColor;
+    final String statusLabel = record.severityLabel;
+    final String scaleTitle = ScaleConfig.allScales[record.scaleType]?.title ?? "量表";
 
+    final IconData iconData = _getScaleIcon(record.scaleType);
     final DateTime displayDate = record.targetDate ?? record.date ?? DateTime.now();
     final String targetDateStr = _getHumanizedDate(displayDate);
 
-    final String createdTimeStr = record.date != null
-        ? DateFormat('MM/dd HH:mm').format(record.date!)
-        : "";
-
-    // 🚀 進化：加入 Dismissible 實現側滑刪除
     return Dismissible(
-      key: Key(record.id.toString()),
+      key: Key(record.recordId ?? record.id.toString()),
       direction: DismissDirection.endToStart,
-      background: Container(
-        margin: const EdgeInsets.only(top: 12),
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        decoration: BoxDecoration(
-          color: Colors.redAccent,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: const Icon(Icons.delete_sweep_rounded, color: Colors.white, size: 32),
-      ),
-      confirmDismiss: (direction) async {
-        HapticFeedback.mediumImpact();
-        return await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text("確認刪除？"),
-            content: Text("即將刪除 $targetDateStr 的 ${_getScaleName(record.scaleType)} 紀錄，此動作無法復原。"),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text("確定刪除", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        );
-      },
-      onDismissed: (direction) async {
+      background: _buildDeleteBackground(),
+      confirmDismiss: (dir) => _confirmDelete(context, record), // 🚀 修正：現在會正確等待對話框結果
+      onDismissed: (dir) async {
         await isarService.deleteRecord(record.id);
         _refresh();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("已刪除 $targetDateStr 的紀錄"), behavior: SnackBarBehavior.floating),
-        );
       },
       child: Card(
         margin: const EdgeInsets.only(top: 12),
+        clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: ExpansionTile(
-          leading: CircleAvatar(
-            backgroundColor: iconColor.withOpacity(0.1),
-            child: Icon(iconData, color: iconColor),
-          ),
-          title: Text(targetDateStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        child: IntrinsicHeight(
+          child: Row(
             children: [
-              Text(
-                "${_getScaleName(record.scaleType)}：${_getSeverityText(record)} (${record.score ?? 0}分)",
-                style: const TextStyle(fontSize: 14),
-              ),
-              if (createdTimeStr.isNotEmpty)
-                Text(
-                    "實際錄入：$createdTimeStr",
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic)
+              Container(width: 6, color: statusColor),
+              Expanded(
+                child: ExpansionTile(
+                  shape: const Border(),
+                  leading: CircleAvatar(
+                    backgroundColor: statusColor.withOpacity(0.1),
+                    child: Icon(iconData, color: statusColor),
+                  ),
+                  title: Text(targetDateStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    "$scaleTitle：$statusLabel (${record.score ?? 0}分)",
+                    style: TextStyle(fontSize: 14, color: statusColor.withOpacity(0.9), fontWeight: FontWeight.bold),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildScoreDetails(record),
+                          if (record.imagePath != null && File(record.imagePath!).existsSync())
+                            _buildPhotoWithConsent(record), // 🚀 修正：名稱對齊
+                          const SizedBox(height: 16),
+                          _buildActionButtons(record),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
+              ),
             ],
           ),
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildScoreDetails(record),
-                  if (record.imagePath != null && File(record.imagePath!).existsSync())
-                    _buildPhotoWithConsent(record),
-                  const SizedBox(height: 16),
-                  _buildActionButtons(record),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );
   }
 
-  // 🚀 進化：人性化日期輔助方法
+  // --- 🔧 核心邏輯輔助 ---
+
+  bool _isScaleInCategory(ScaleType type, AppCategory category) {
+    switch (category) {
+      case AppCategory.dermatology:
+        return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(type);
+      case AppCategory.psychiatry:
+        return [ScaleType.phq9, ScaleType.gad7].contains(type);
+      case AppCategory.pain:
+        return type == ScaleType.vas;
+    }
+  }
+
+  String _getCategoryName(AppCategory cat) {
+    switch (cat) {
+      case AppCategory.dermatology: return "皮膚科";
+      case AppCategory.psychiatry: return "身心科";
+      case AppCategory.pain: return "疼痛管理";
+    }
+  }
+
+  IconData _getScaleIcon(ScaleType type) {
+    switch (type) {
+      case ScaleType.uas7: return Icons.show_chart_rounded;
+      case ScaleType.adct: return Icons.fact_check_rounded;
+      case ScaleType.scorad: return Icons.biotech_rounded;
+      case ScaleType.phq9:
+      case ScaleType.gad7: return Icons.psychology_rounded;
+      case ScaleType.vas: return Icons.bolt_rounded;
+      default: return Icons.assignment_rounded;
+    }
+  }
+
   String _getHumanizedDate(DateTime date) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final target = DateTime(date.year, date.month, date.day);
-
-    if (target == today) return "今天 (${DateFormat('E', 'zh_TW').format(date)})";
-    if (target == yesterday) return "昨天 (${DateFormat('E', 'zh_TW').format(date)})";
+    if (DateUtils.isSameDay(date, now)) return "今天 (${DateFormat('E', 'zh_TW').format(date)})";
+    if (DateUtils.isSameDay(date, now.subtract(const Duration(days: 1)))) return "昨天";
     return DateFormat('yyyy/MM/dd (E)', 'zh_TW').format(date);
   }
 
   Widget _buildScoreDetails(PoemRecord record) {
-    final int score = record.score ?? 0;
-    String description = "";
-
-    switch (record.scaleType) {
-      case ScaleType.adct:
-        description = score >= 7 ? "⚠️ 目前濕疹控制不佳，建議諮詢醫師。" : "✅ 目前濕疹控制良好。";
-        break;
-      case ScaleType.poem:
-        description = "POEM 總分分級：${_getSeverityText(record)}";
-        break;
-      case ScaleType.uas7:
-        description = "UAS7 七日活性判定：${_getSeverityText(record)}";
-        break;
-      case ScaleType.scorad: // 🚀 進化：補上 SCORAD 描述
-        description = "SCORAD 綜合評估：${_getSeverityText(record)}";
-        break;
-      default:
-        description = "已完成臨床評估紀錄。";
-    }
-
-    return Text(description, style: const TextStyle(fontSize: 16, color: Colors.blueGrey, fontWeight: FontWeight.w500));
+    return Text(
+        "臨床建議：${record.severityLabel}。請持續觀察紀錄，並於回診時主動提供醫師參考。",
+        style: const TextStyle(fontSize: 16, color: Colors.blueGrey, fontWeight: FontWeight.w500)
+    );
   }
 
   Widget _buildPhotoWithConsent(PoemRecord record) {
@@ -325,84 +275,43 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     ]);
   }
 
-  // --- 🔧 臨床輔助工具 (進化：補齊 SCORAD 判讀邏輯) ---
-  Color _getSeverityColor(PoemRecord record) {
-    final int score = record.score ?? 0;
-    if (record.scaleType == ScaleType.adct) {
-      return score >= 7 ? Colors.red : Colors.green;
-    }
-    if (record.scaleType == ScaleType.uas7) {
-      if (score >= 28) return Colors.red;
-      if (score >= 16) return Colors.orange;
-      return Colors.green;
-    }
-    if (record.scaleType == ScaleType.scorad) {
-      if (score >= 50) return Colors.red;
-      if (score >= 25) return Colors.orange;
-      return Colors.green;
-    }
-    // POEM
-    if (score >= 17) return Colors.red;
-    if (score >= 8) return Colors.orange;
-    return Colors.green;
+  Widget _buildDeleteBackground() {
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.only(right: 20),
+      decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(16)),
+      child: const Icon(Icons.delete_sweep_rounded, color: Colors.white, size: 32),
+    );
   }
 
-  String _getSeverityText(PoemRecord record) {
-    final int s = record.score ?? 0;
-    switch (record.scaleType) {
-      case ScaleType.adct: return s >= 7 ? "控制不佳" : "控制良好";
-      case ScaleType.poem:
-        if (s >= 17) return "重度";
-        if (s >= 8) return "中度";
-        return "中輕度";
-      case ScaleType.uas7:
-        if (s >= 28) return "高度活性";
-        if (s >= 16) return "中度活性";
-        return "低度活性";
-      case ScaleType.scorad:
-        if (s >= 50) return "重度";
-        if (s >= 25) return "中度";
-        return "輕度";
-      default: return "已完成";
-    }
-  }
-
-  String _getScaleName(ScaleType type) {
-    switch (type) {
-      case ScaleType.adct: return "ADCT";
-      case ScaleType.poem: return "POEM";
-      case ScaleType.uas7: return "UAS7";
-      case ScaleType.scorad: return "SCORAD";
-      default: return "量表";
-    }
-  }
-
-  IconData _getScaleIcon(ScaleType type) {
-    if (type == ScaleType.uas7) return Icons.show_chart_rounded;
-    if (type == ScaleType.adct) return Icons.fact_check_rounded;
-    if (type == ScaleType.scorad) return Icons.biotech_rounded;
-    return Icons.assignment_rounded;
+  // 🚀 修正：現在會回傳對話框結果給 Dismissible
+  Future<bool?> _confirmDelete(BuildContext context, PoemRecord record) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("確認刪除紀錄？"),
+        content: const Text("此動作無法復原，該紀錄將從歷史與趨勢圖中移除。"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+              child: const Text("確定刪除")
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildActionButtons(PoemRecord record) {
     return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
       TextButton.icon(
         onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => PoemSurveyScreen(
-                initialType: record.scaleType,
-                oldRecord: record,
-              ),
-            ),
-          );
-          if (result != null) {
-            _refresh();
-            ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("紀錄已成功更新"), backgroundColor: Colors.green)
-            );
-          }
+          final result = await Navigator.push(context, MaterialPageRoute(
+            builder: (context) => PoemSurveyScreen(initialType: record.scaleType, oldRecord: record),
+          ));
+          if (result == true) _refresh();
         },
         icon: const Icon(Icons.edit_outlined, color: Colors.blue),
         label: const Text("修改", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
@@ -413,16 +322,20 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         icon: const Icon(Icons.picture_as_pdf),
         label: const Text("PDF", style: TextStyle(fontWeight: FontWeight.bold)),
       ),
-      // 🚀 刪除按鈕依然保留，滿足不想滑動的使用者
       TextButton.icon(
-        onPressed: () => _confirmDelete(context, record),
+        onPressed: () async {
+          final confirm = await _confirmDelete(context, record);
+          if (confirm == true) {
+            await isarService.deleteRecord(record.id);
+            _refresh();
+          }
+        },
         icon: const Icon(Icons.delete_outline, color: Colors.red),
         label: const Text("刪除", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
       ),
     ]);
   }
 
-  // 🚀 進化：美化空白狀態
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -431,31 +344,6 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
           Icon(Icons.inbox_rounded, size: 80, color: Colors.grey.shade300),
           const SizedBox(height: 16),
           Text("目前尚無此項紀錄", style: TextStyle(color: Colors.grey.shade600, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text("您填寫的臨床檢測都會顯示在這裡", style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
-        ],
-      ),
-    );
-  }
-
-  void _confirmDelete(BuildContext context, PoemRecord record) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("確認刪除紀錄？"),
-        content: const Text("此動作無法復原，該紀錄將從歷史與趨勢圖中移除。"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("取消")),
-          ElevatedButton(
-              onPressed: () async {
-                await isarService.deleteRecord(record.id);
-                if (!mounted) return;
-                Navigator.pop(ctx);
-                _refresh();
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-              child: const Text("確定刪除")
-          ),
         ],
       ),
     );

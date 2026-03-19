@@ -4,11 +4,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
 
 // ✅ 1. 補齊所有錯誤類型，解決 Member not found 報錯
-enum BootStage { database, notification, finalizing, ready }
+enum BootStage { initializing, finalizing, ready }
 enum BootstrapError { none, databaseTimeout, permissionDenied, diskFull, unknown }
 
 class BootstrapController {
-  final ValueNotifier<BootStage> stage = ValueNotifier(BootStage.database);
+  bool _isStarting = false; // ✅ 加這裡
+
+  final ValueNotifier<BootStage> stage = ValueNotifier(BootStage.initializing);
   final ValueNotifier<BootstrapError> error = ValueNotifier(BootstrapError.none);
   final ValueNotifier<double> progress = ValueNotifier(0.0);
   final ValueNotifier<String> errorMessage = ValueNotifier("");
@@ -18,42 +20,42 @@ class BootstrapController {
   DateTime? _startTime;
 
   Future<void> start() async {
+    if (_isStarting) {
+      debugPrint("⚠️ Bootstrap already running");
+      return;
+    }
+
+    _isStarting = true;
     _startTime = DateTime.now();
+
     error.value = BootstrapError.none;
     errorMessage.value = "";
     needsConsent.value = false;
 
     try {
-      // 階段 1: 臨床資料庫 (含 8 秒 Watchdog)
-      _update(BootStage.database, 0.2);
-      await isarService.openDB().timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw BootstrapError.databaseTimeout,
-      );
+      _update(BootStage.initializing, 0.3);
+      await Future.delayed(const Duration(milliseconds: 200));
 
-      // 階段 2: 通知服務 (確保 UAS7 每日提醒功能正常)
-      // 階段 2: 通知服務 (確保 UAS7 每日提醒功能正常)
-      _update(BootStage.notification, 0.5);
-      await notificationService.init(
-          onPayloadReceived: (payload) {
-            // 跳轉邏輯已經統一交給 main.dart 處理，這裡給個空函數即可
-          }
-      );
+      _update(BootStage.initializing, 0.6);
+      await Future.delayed(const Duration(milliseconds: 200));
 
-      // 階段 3: 法規同意權檢查
       _update(BootStage.finalizing, 0.8);
+
       final prefs = await SharedPreferences.getInstance();
       final hasAccepted = prefs.getBool('has_accepted_consent') ?? false;
 
       if (!hasAccepted) {
         needsConsent.value = true;
-        _update(BootStage.finalizing, 0.9);
-      } else {
-        _update(BootStage.ready, 1.0);
-        _logKPI();
+        return; // ✅ 不進 ready
       }
+
+      _update(BootStage.ready, 1.0);
+      _logKPI();
+
     } catch (e) {
       _handleError(e);
+    } finally {
+      _isStarting = false; // ✅ 一定要 reset
     }
   }
 

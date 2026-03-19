@@ -1,0 +1,1 @@
+enum HealthCategory { dermatology, psychiatry, pain }

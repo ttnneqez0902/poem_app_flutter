@@ -1,64 +1,53 @@
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../models/poem_record.dart';
+import '../models/poem_record.dart'; // 建議未來重命名為 health_record.dart
 
 class IsarService {
   Isar? _isar;
 
-  // 🚀 核心 Getter：供 Controller 與外部訪問
   Isar get db => _isar ?? (Isar.getInstance() ?? (throw Exception("Isar 尚未初始化")));
   Isar get isar => db;
 
-  // 🚀 修正 1：對齊 main.dart 的初始化名稱
   Future<void> init() async {
     await openDB();
   }
 
   Future<Isar> openDB() async {
-    // 檢查是否已經有實例在跑
     if (Isar.instanceNames.isEmpty) {
       final dir = await getApplicationDocumentsDirectory();
       _isar = await Isar.open(
-        [PoemRecordSchema],
+        [
+          PoemRecordSchema,
+          // 🚀 未來在這裡加入新 Schema，例如：
+          // PsychiatryRecordSchema,
+          // PainRecordSchema,
+        ],
         directory: dir.path,
+        inspector: true, // 開發模式建議開啟，方便查看數據
       );
     } else {
-      // 🚀 優化點：如果 getInstance 回傳 null，可以試著重新執行一次開檔
-      _isar = Isar.getInstance() ?? await Isar.open(
-        [PoemRecordSchema],
-        directory: (await getApplicationDocumentsDirectory()).path,
-      );
+      _isar = Isar.getInstance() ?? await _isarReopen();
     }
     return _isar!;
   }
 
-  // 🚀 修正 2：新增熱切換方法 (供 CloudBackupService 使用)
-  // 當雲端還原成功後，調用此方法讓全域實例指向新資料庫
+  // 封裝重複的開檔邏輯
+  Future<Isar> _isarReopen() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return await Isar.open([PoemRecordSchema], directory: dir.path);
+  }
+
   void updateInstance(Isar newIsar) {
     _isar = newIsar;
   }
 
-  // 輔助方法：確保每次操作前 Isar 是開著的
   Future<Isar> _ensureIsar() async {
     if (_isar != null) return _isar!;
     return await openDB();
   }
 
-  // --- [ 數據管理架構圖 ] ---
-  //
-
-  // --- 以下功能邏輯保持不變，但確保使用 _ensureIsar() ---
-
-  Future<int> getRecordsCountInLastDays(int days) async {
-    final startTime = DateTime.now().subtract(Duration(days: days));
-    final instance = await _ensureIsar();
-    return await instance.poemRecords
-        .filter()
-        .dateGreaterThan(startTime)
-        .count();
-  }
-
+  // 🚀 核心修正 1：補回主畫面與問卷需要的同步查詢
   Future<List<PoemRecord>> getUnsyncedRecords(String? uid) async {
     if (uid == null) return [];
     final instance = await _ensureIsar();
@@ -69,57 +58,7 @@ class IsarService {
         .findAll();
   }
 
-// 🚀 核心修正：補上 HomeScreen 需要的 getAllRecords
-  Future<List<PoemRecord>> getAllRecords() async {
-    final instance = await _ensureIsar();
-    // 預設按日期降序排列
-    return await instance.poemRecords.where().sortByDateDesc().findAll();
-  }
-
-  // 🚀 核心修正：補上 HistoryListScreen 需要的 updateImageConsent
-  Future<void> updateImageConsent(Id id, bool consent) async {
-    final instance = await _ensureIsar();
-    await instance.writeTxn(() async {
-      final record = await instance.poemRecords.get(id);
-      if (record != null) {
-        record.imageConsent = consent;
-        await instance.poemRecords.put(record);
-      }
-    });
-  }
-
-  Future<void> saveRecord(PoemRecord record) async {
-    final instance = await _ensureIsar();
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      record.userId = user.uid;
-    }
-    await instance.writeTxn(() async {
-      await instance.poemRecords.put(record);
-    });
-  }
-
-  // 🚀 這裡的邏輯很好：saveAllRecords 內建了去重檢查
-  Future<void> saveAllRecords(List<PoemRecord> records) async {
-    final instance = await _ensureIsar();
-    await instance.writeTxn(() async {
-      for (var record in records) {
-        final existing = await instance.poemRecords
-            .filter()
-            .targetDateEqualTo(record.targetDate)
-            .scaleTypeEqualTo(record.scaleType)
-            .findFirst();
-
-        if (existing == null) {
-          await instance.poemRecords.put(record);
-        } else {
-          record.id = existing.id;
-          await instance.poemRecords.put(record);
-        }
-      }
-    });
-  }
-
+  // 🚀 核心修正 2：補回批量標記同步的方法
   Future<void> markAsSynced(List<int> ids) async {
     final instance = await _ensureIsar();
     await instance.writeTxn(() async {
@@ -135,15 +74,93 @@ class IsarService {
     });
   }
 
-  Future<void> clearAllData() async {
+  // --- 🏥 數據查詢邏輯優化 ---
+
+  /// 🚀 核心改進：新增依「量表類型」抓取數據
+  /// 這樣身心科才能只抓 PHQ-9，皮膚科只抓 POEM
+  Future<List<PoemRecord>> getRecordsByType(ScaleType type) async {
     final instance = await _ensureIsar();
-    await instance.writeTxn(() => instance.poemRecords.clear());
+    return await instance.poemRecords
+        .filter()
+        .scaleTypeEqualTo(type)
+        .sortByDateDesc()
+        .findAll();
+  }
+
+  /// 🚀 核心改進：依「科別」抓取一組量表
+  /// 例如傳入 AppCategory.psychiatry，就抓出 PHQ-9 和 GAD-7
+  Future<List<PoemRecord>> getRecordsByCategory(List<ScaleType> types) async {
+    final instance = await _ensureIsar();
+    return await instance.poemRecords
+        .filter()
+        .anyOf(types, (q, type) => q.scaleTypeEqualTo(type))
+        .sortByDateDesc()
+        .findAll();
+  }
+
+  Future<List<PoemRecord>> getAllRecords() async {
+    final instance = await _ensureIsar();
+    return await instance.poemRecords.where().sortByDateDesc().findAll();
+  }
+
+  // --- 📝 數據寫入邏輯 ---
+
+  Future<void> saveRecord(PoemRecord record) async {
+    final instance = await _ensureIsar();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      record.userId = user.uid;
+    }
+    // 儲存前確保時間戳記完整
+    record.date ??= DateTime.now();
+
+    await instance.writeTxn(() async {
+      await instance.poemRecords.put(record);
+    });
+  }
+
+  // 🚀 保持 saveAllRecords 的去重邏輯，這是還原數據時的關鍵
+  Future<void> saveAllRecords(List<PoemRecord> records) async {
+    final instance = await _ensureIsar();
+    await instance.writeTxn(() async {
+      for (var record in records) {
+        final existing = await instance.poemRecords
+            .filter()
+            .targetDateEqualTo(record.targetDate)
+            .scaleTypeEqualTo(record.scaleType)
+            .findFirst();
+
+        if (existing == null) {
+          await instance.poemRecords.put(record);
+        } else {
+          record.id = existing.id; // 覆蓋舊資料
+          await instance.poemRecords.put(record);
+        }
+      }
+    });
+  }
+
+  // --- 其餘輔助方法保持不變 ---
+
+  Future<int> getRecordsCountInLastDays(int days) async {
+    final startTime = DateTime.now().subtract(Duration(days: days));
+    final instance = await _ensureIsar();
+    return await instance.poemRecords.filter().dateGreaterThan(startTime).count();
+  }
+
+  Future<void> updateImageConsent(Id id, bool consent) async {
+    final instance = await _ensureIsar();
+    await instance.writeTxn(() async {
+      final record = await instance.poemRecords.get(id);
+      if (record != null) {
+        record.imageConsent = consent;
+        await instance.poemRecords.put(record);
+      }
+    });
   }
 
   Future<void> deleteRecord(Id id) async {
     final instance = await _ensureIsar();
-    await instance.writeTxn(() async {
-      await instance.poemRecords.delete(id);
-    });
+    await instance.writeTxn(() => instance.poemRecords.delete(id));
   }
 }

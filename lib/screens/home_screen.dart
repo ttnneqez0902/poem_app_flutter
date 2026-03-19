@@ -19,10 +19,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:app_tracking_transparency/app_tracking_transparency.dart';
+
 import '../services/cloud_backup_service.dart';
 import '../widgets/backup_dialogs.dart';
 import '../services/backup_error_dialog.dart';
 import '../services/notification_service.dart';
+import '../models/scale_config.dart';
 
 
 class HomeScreen extends StatefulWidget {
@@ -33,25 +36,26 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // --- 核心狀態與配置 ---
+  AppCategory _currentCategory = AppCategory.dermatology;
   final String _appVersion = "1.0.0";
   static const int _virtualInitialPage = 500;
   final int _virtualTotalCount = 1000;
   String? _localPhotoPath;
   bool _isSyncing = false;
+  bool _isScrolled = false;
+  bool _isManagementMode = false;
 
   late final PageController _pageController = PageController(
     initialPage: _virtualInitialPage,
     viewportFraction: 0.9,
   );
-
   final ScrollController _scrollController = ScrollController();
-  bool _isScrolled = false;
 
-  bool _isManagementMode = false;
+  // --- 提醒與量表開關設定 ---
   final Map<ScaleType, TimeOfDay> _reminderTimes = {};
   final Map<ScaleType, int> _reminderDays = {};
   final Map<ScaleType, bool> _reminderEnabled = {};
-
   Map<ScaleType, bool> _enabledScales = {
     ScaleType.adct: true,
     ScaleType.poem: true,
@@ -59,47 +63,64 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaleType.scorad: true,
   };
 
-  // 2. 加入廣告相關變數
+  // --- 廣告相關變數 ---
   BannerAd? _bannerAd;
   bool _isAdLoaded = false;
-
-  // 🚀 1. 插頁廣告相關變數
   InterstitialAd? _interstitialAd;
   int _numInterstitialLoadAttempts = 0;
-  static const int maxFailedLoadAttempts = 3; // 最多嘗試重新載入 3 次
+  static const int maxFailedLoadAttempts = 3;
 
-// 🚀 2. 使用 kReleaseMode 自動切換正式與測試 ID
-// 🚀 使用 kReleaseMode 自動切換，確保開發時只看測試廣告，上線才跑正式廣告
   final String _adUnitId = kReleaseMode
-      ? (Platform.isAndroid
-      ? 'ca-app-pub-6250825906693072/8000200207' // ✅ 正式 Android 橫幅
-      : 'ca-app-pub-6250825906693072/1102931009') // ✅ 正式 iOS 橫幅
-      : (Platform.isAndroid
-      ? 'ca-app-pub-3940256099942544/6300978111'
-      : 'ca-app-pub-3940256099942544/2934735716');
+      ? (Platform.isAndroid ? 'ca-app-pub-6250825906693072/8000200207' : 'ca-app-pub-6250825906693072/1102931009')
+      : (Platform.isAndroid ? 'ca-app-pub-3940256099942544/6300978111' : 'ca-app-pub-3940256099942544/2934735716');
 
   final String _interstitialAdUnitId = kReleaseMode
-      ? (Platform.isAndroid
-      ? 'ca-app-pub-6250825906693072/6233433793' // ✅ 正式 Android 插頁
-      : 'ca-app-pub-6250825906693072/9597963737') // ✅ iOS 正式 (更新這行)
-      : (Platform.isAndroid
-      ? 'ca-app-pub-3940256099942544/1033173712'
-      : 'ca-app-pub-3940256099942544/4411468910');
-
+      ? (Platform.isAndroid ? 'ca-app-pub-6250825906693072/6233433793' : 'ca-app-pub-6250825906693072/9597963737')
+      : (Platform.isAndroid ? 'ca-app-pub-3940256099942544/1033173712' : 'ca-app-pub-3940256099942544/4411468910');
 
   Future<Map<String, dynamic>>? _trackerDataFuture;
+
+  // --- 雲端備份服務 ---
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['https://www.googleapis.com/auth/drive.appdata'],
+  );
+
+  late final CloudBackupService cloudBackupService = CloudBackupService(
+    isar: isarService.isar,
+    isarFactory: () async => await isarService.openDB(),
+    googleSignIn: _googleSignIn,
+    onDbSwapped: (newIsar) => isarService.updateInstance(newIsar),
+  );
+
+  // --- 科別內容配置表 ---
+  Map<AppCategory, List<Map<String, dynamic>>> get _categoryConfigs => {
+    AppCategory.dermatology: [
+      {'type': ScaleType.adct, 'title': 'ADCT', 'sub': '每周異膚控制', 'color': Colors.blue, 'icon': Icons.assignment_turned_in},
+      {'type': ScaleType.poem, 'title': 'POEM', 'sub': '每周濕疹檢測', 'color': Colors.orange, 'icon': Icons.opacity},
+      {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '每日蕁麻疹量表', 'color': Colors.teal, 'icon': Icons.calendar_month},
+      {'type': ScaleType.scorad, 'title': 'SCORAD', 'sub': '每周異膚綜合', 'color': Colors.purple, 'icon': Icons.biotech},
+    ],
+    AppCategory.psychiatry: [
+      // 🚀 關鍵：確保這裡使用的是 ScaleType.phq9 而不是字串
+      {'type': ScaleType.phq9, 'title': 'PHQ-9', 'sub': '憂鬱情緒篩檢', 'color': Colors.indigo, 'icon': Icons.psychology},
+      {'type': ScaleType.gad7, 'title': 'GAD-7', 'sub': '焦慮狀況評估', 'color': Colors.green.shade700, 'icon': Icons.sentiment_dissatisfied},
+    ],
+    AppCategory.pain: [
+      {'type': ScaleType.vas, 'title': 'VAS', 'sub': '疼痛視覺類比', 'color': Colors.redAccent, 'icon': Icons.bolt},
+    ],
+  };
 
   @override
   void initState() {
     super.initState();
-    _checkUserStatus();
+    _checkUserStatus(); // 補回：Debug 狀態檢查
     _loadSettings();
     _loadLocalPhoto();
     _refreshData();
-    _loadBannerAd(); // 🚀 啟動載入
-    _createInterstitialAd(); // 🚀 啟動時就先載入第一則
+    _loadBannerAd();
+    _createInterstitialAd();
+    _requestTrackingPermission();
 
-    // 🚀 初始化完成後執行備份檢查
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _checkBackupRequirement();
@@ -114,85 +135,58 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollController.addListener(() {
       if (!_scrollController.hasClients) return;
       final offset = _scrollController.offset;
-      if (offset > 10 && !_isScrolled) {
-        setState(() => _isScrolled = true);
-      } else if (offset <= 10 && _isScrolled) {
-        setState(() => _isScrolled = false);
-      }
+      if (offset > 10 && !_isScrolled) setState(() => _isScrolled = true);
+      else if (offset <= 10 && _isScrolled) setState(() => _isScrolled = false);
     });
   }
 
-  // 🚀 核心修正：加入 SharedPreferences 判斷，確保只顯示一次
+  // --- 🔐 權限與身份檢查 ---
+  void _checkUserStatus() {
+    if (FirebaseAuth.instance.currentUser == null) debugPrint("⚠️ 訪客模式：未登入");
+  }
+
+  Future<void> _requestTrackingPermission() async {
+    if (!Platform.isIOS) return;
+    final status = await AppTrackingTransparency.trackingAuthorizationStatus;
+    if (status == TrackingStatus.notDetermined) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      await AppTrackingTransparency.requestTrackingAuthorization();
+    }
+  }
+
   Future<void> _showWelcomeMessage() async {
     final user = FirebaseAuth.instance.currentUser;
-    // 訪客模式或未登入則不顯示
     if (user == null || user.isAnonymous) return;
-
     final prefs = await SharedPreferences.getInstance();
-    // 使用 UID 建立專屬標記，避免不同帳號切換時出錯
     String welcomeKey = 'has_shown_welcome_${user.uid}';
-    bool hasShown = prefs.getBool(welcomeKey) ?? false;
-
-    if (!hasShown) {
+    if (!(prefs.getBool(welcomeKey) ?? false)) {
       bool isGoogleUser = user.providerData.any((p) => p.providerId == 'google.com');
-      String displayName = user.displayName ?? "使用者";
-      String providerName = isGoogleUser ? "Google" : "Apple";
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(
-                isGoogleUser ? Icons.g_mobiledata_rounded : Icons.apple_rounded,
-                color: Colors.white,
-                size: 30,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  "歡迎回來，$displayName！已透過 $providerName 安全登入。",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.blue.shade700,
-          duration: const Duration(seconds: 4),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          margin: EdgeInsets.only(
-            bottom: MediaQuery.of(context).size.height * 0.1, // 🚀 避開底部廣告區域
-            left: 20,
-            right: 20,
-          ),
-        ),
-      );
-
-      // 儲存標記，下次進入 initState 時就不會再彈出
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Row(children: [
+          Icon(isGoogleUser ? Icons.g_mobiledata_rounded : Icons.apple_rounded, color: Colors.white, size: 30),
+          const SizedBox(width: 12),
+          Expanded(child: Text("歡迎回來，${user.displayName ?? "使用者"}！", style: const TextStyle(fontWeight: FontWeight.bold))),
+        ]),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.blue.shade700,
+        margin: EdgeInsets.only(bottom: MediaQuery.of(context).size.height * 0.1, left: 20, right: 20),
+      ));
       await prefs.setBool(welcomeKey, true);
     }
   }
 
+  // --- 💰 廣告邏輯 (完整回饋版) ---
   void _loadBannerAd() {
     _bannerAd?.dispose();
-
     _bannerAd = BannerAd(
       adUnitId: _adUnitId,
       request: const AdRequest(),
       size: AdSize.banner,
       listener: BannerAdListener(
-        onAdLoaded: (ad) {
-          setState(() => _isAdLoaded = true);
-          debugPrint('廣告載入成功');
-        },
+          onAdLoaded: (ad) => setState(() => _isAdLoaded = true),
           onAdFailedToLoad: (ad, err) {
             ad.dispose();
-            debugPrint('廣告載入失敗: ${err.message}');
-            Future.delayed(const Duration(seconds: 30), () {
-              if (mounted) _loadBannerAd();
-            });
+            Future.delayed(const Duration(seconds: 30), () { if (mounted) _loadBannerAd(); });
           }
       ),
     )..load();
@@ -203,106 +197,45 @@ class _HomeScreenState extends State<HomeScreen> {
       adUnitId: _interstitialAdUnitId,
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (InterstitialAd ad) {
-          debugPrint('🚀 插頁廣告載入成功');
-
-          _interstitialAd?.dispose();
+        onAdLoaded: (ad) {
+          debugPrint('🚀 插頁廣告預載成功');
           _interstitialAd = ad;
-
           _numInterstitialLoadAttempts = 0;
         },
-        onAdFailedToLoad: (LoadAdError error) {
-          debugPrint('❌ 插頁廣告載入失敗: ${error.message}');
+        onAdFailedToLoad: (err) {
           _numInterstitialLoadAttempts++;
           _interstitialAd = null;
-
-          // 🚀 失敗時自動重試，但最多 3 次，避免浪費手機流量
-          if (_numInterstitialLoadAttempts <= maxFailedLoadAttempts) {
-            _createInterstitialAd();
-          }
+          if (_numInterstitialLoadAttempts <= maxFailedLoadAttempts) _createInterstitialAd();
         },
       ),
     );
   }
 
   void _showInterstitialAd() {
-    if (_interstitialAd == null) {
-      debugPrint('⚠️ 廣告尚未準備好，跳過顯示');
-      return;
-    }
+    if (_interstitialAd == null) return;
     _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
-      onAdShowedFullScreenContent: (InterstitialAd ad) => debugPrint('廣告顯示中'),
-      onAdDismissedFullScreenContent: (InterstitialAd ad) {
-        debugPrint('使用者關閉廣告');
-        ad.dispose();
-        _createInterstitialAd(); // 🚀 關鍵：關閉後立刻預載下一則
-      },
-      onAdFailedToShowFullScreenContent: (InterstitialAd ad, AdError error) {
-        debugPrint('廣告顯示失敗: $error');
-        ad.dispose();
-        _createInterstitialAd();
-      },
+      onAdShowedFullScreenContent: (ad) => debugPrint('廣告顯示中'),
+      onAdDismissedFullScreenContent: (ad) { ad.dispose(); _createInterstitialAd(); },
+      onAdFailedToShowFullScreenContent: (ad, err) { ad.dispose(); _createInterstitialAd(); },
     );
     _interstitialAd!.show();
-    _interstitialAd = null; // 顯示後清空
+    _interstitialAd = null;
   }
 
-
-  void _refreshData() {
-    setState(() {
-      _trackerDataFuture = _getTrackerData();
-    });
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    _scrollController.dispose();
-    _bannerAd?.dispose(); // 🚀 釋放廣告資源，避免記憶體洩漏
-    _interstitialAd?.dispose(); // 🚀 補上這行，確保插頁廣告資源也被釋放
-    super.dispose();
-  }
-
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: ['https://www.googleapis.com/auth/drive.appdata'],
-  );
-
-  late final CloudBackupService cloudBackupService = CloudBackupService(
-    isar: isarService.isar,
-    isarFactory: () async => await isarService.openDB(),
-    googleSignIn: _googleSignIn,
-    onDbSwapped: (newIsar) => isarService.updateInstance(newIsar),
-  );
-
+  // --- 📸 頭像管理 ---
   Future<void> _loadLocalPhoto() async {
     final prefs = await SharedPreferences.getInstance();
-    String? savedPath = prefs.getString('user_custom_photo');
-    if (savedPath != null) {
-      final file = File(savedPath);
-      if (!await file.exists()) {
-        final docDir = await getApplicationDocumentsDirectory();
-        final newPath = p.join(docDir.path, p.basename(savedPath));
-        if (await File(newPath).exists()) {
-          savedPath = newPath;
-          await prefs.setString('user_custom_photo', newPath);
-        }
-      }
-    }
-    setState(() => _localPhotoPath = savedPath);
+    String? path = prefs.getString('user_custom_photo');
+    if (path != null && File(path).existsSync()) setState(() => _localPhotoPath = path);
   }
 
   Future<void> _handleChangePhoto() async {
-    final ImagePicker picker = ImagePicker();
+    final picker = ImagePicker();
     final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(leading: const Icon(Icons.photo_library), title: const Text('從相簿選擇'), onTap: () => Navigator.pop(ctx, ImageSource.gallery)),
-            ListTile(leading: const Icon(Icons.camera_alt), title: const Text('開啟相機'), onTap: () => Navigator.pop(ctx, ImageSource.camera)),
-          ],
-        ),
-      ),
+      context: context, builder: (ctx) => SafeArea(child: Wrap(children: [
+      ListTile(leading: const Icon(Icons.photo_library), title: const Text('從相簿選擇'), onTap: () => Navigator.pop(ctx, ImageSource.gallery)),
+      ListTile(leading: const Icon(Icons.camera_alt), title: const Text('開啟相機'), onTap: () => Navigator.pop(ctx, ImageSource.camera)),
+    ])),
     );
     if (source == null) return;
     final pickedFile = await picker.pickImage(source: source);
@@ -310,21 +243,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final croppedFile = await ImageCropper().cropImage(
       sourcePath: pickedFile.path,
       uiSettings: [
-        AndroidUiSettings(toolbarTitle: '編輯大頭照', toolbarColor: Colors.blue, toolbarWidgetColor: Colors.white, cropStyle: CropStyle.circle, showCropGrid: false, hideBottomControls: true, aspectRatioPresets: [CropAspectRatioPreset.square], lockAspectRatio: true, initAspectRatio: CropAspectRatioPreset.square),
-        IOSUiSettings(title: '編輯大頭照', aspectRatioLockEnabled: true, resetAspectRatioEnabled: false),
+        AndroidUiSettings(toolbarTitle: '編輯大頭照', toolbarColor: Colors.blue, toolbarWidgetColor: Colors.white, cropStyle: CropStyle.circle),
+        IOSUiSettings(title: '編輯大頭照', aspectRatioLockEnabled: true),
       ],
     );
     if (croppedFile != null) {
       setState(() => _localPhotoPath = croppedFile.path);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('user_custom_photo', croppedFile.path);
+      (await SharedPreferences.getInstance()).setString('user_custom_photo', croppedFile.path);
     }
   }
 
-  void _checkUserStatus() {
-    if (FirebaseAuth.instance.currentUser == null) debugPrint("訪客模式");
-  }
-
+  // --- ⚙️ 設定持久化 (補回關鍵修正) ---
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -332,25 +261,18 @@ class _HomeScreenState extends State<HomeScreen> {
         _enabledScales[type] = prefs.getBool('enable_${type.name}') ?? true;
         _reminderEnabled[type] = prefs.getBool('reminder_enabled_${type.name}') ?? true;
         _reminderDays[type] = prefs.getInt('reminder_day_${type.name}') ?? DateTime.sunday;
-        final savedHour = prefs.getInt('reminder_hour_${type.name}') ?? 20;
-        final savedMinute = prefs.getInt('reminder_minute_${type.name}') ?? 0;
-        _reminderTimes[type] = TimeOfDay(hour: savedHour, minute: savedMinute);
+        final h = prefs.getInt('reminder_hour_${type.name}') ?? 20;
+        final m = prefs.getInt('reminder_minute_${type.name}') ?? 0;
+        _reminderTimes[type] = TimeOfDay(hour: h, minute: m);
       }
     });
     _scheduleClinicalReminders();
   }
 
-  Future<void> _scheduleClinicalReminders() async {
-    for (var type in ScaleType.values) {
-      await NotificationService().cancel(type.index);
-      if (_enabledScales[type] == true && _reminderEnabled[type] == true) {
-        final time = _reminderTimes[type]!;
-        if (type == ScaleType.uas7) {
-          await NotificationService().scheduleDailyReminder(id: type.index, title: '${type.name.toUpperCase()} 追蹤提醒', body: '請記錄今天的狀況。', hour: time.hour, minute: time.minute, payload: type.name);
-        } else {
-          await NotificationService().scheduleWeeklyReminder(id: type.index, title: '${type.name.toUpperCase()} 追蹤提醒', body: '今天是紀錄日。', dayOfWeek: _reminderDays[type]!, hour: time.hour, minute: time.minute, payload: type.name);
-        }
-      }
+  Future<void> _saveSettings() async { // 補回：存下管理模式的修改
+    final prefs = await SharedPreferences.getInstance();
+    for (var entry in _enabledScales.entries) {
+      await prefs.setBool('enable_${entry.key.name}', entry.value);
     }
   }
 
@@ -364,79 +286,41 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    for (var entry in _enabledScales.entries) {
-      await prefs.setBool('enable_${entry.key.name}', entry.value);
-    }
-  }
-
-  Future<Map<String, dynamic>> _getTrackerData() async {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final allRecords = await isarService.getAllRecords();
-    final uas7Records = allRecords.where((r) => r.scaleType == ScaleType.uas7).toList();
-    DateTime uas7Start = today.subtract(const Duration(days: 8));
-    return {
-      'uas7Start': uas7Start,
-      'uas7Status': List.generate(14, (i) => uas7Records.any((r) => DateUtils.isSameDay(r.targetDate ?? r.date, uas7Start.add(Duration(days: i))))),
-      'uas7Records': uas7Records,
-      'adct': allRecords.where((r) => r.scaleType == ScaleType.adct).toList()..sort((a, b) => b.date!.compareTo(a.date!)),
-      'poem': allRecords.where((r) => r.scaleType == ScaleType.poem).toList()..sort((a, b) => b.date!.compareTo(a.date!)),
-      'scorad': allRecords.where((r) => r.scaleType == ScaleType.scorad).toList()..sort((a, b) => b.date!.compareTo(a.date!)),
-    };
-  }
-
-  Future<void> _handleLogout(BuildContext context) async {
-    // 1. 顯示確認對話框
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("確認登出"),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("取消")
-          ),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("登出", style: TextStyle(color: Colors.red))
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        // 🚀 2. 取得當前使用者 UID 並清除「已顯示歡迎詞」的標記
-        final user = FirebaseAuth.instance.currentUser;
-        if (user != null) {
-          final prefs = await SharedPreferences.getInstance();
-          // 刪除該帳號專屬的歡迎標記
-          await prefs.remove('has_shown_welcome_${user.uid}');
+  Future<void> _scheduleClinicalReminders() async {
+    for (var type in ScaleType.values) {
+      await NotificationService().cancel(type.index);
+      if (_enabledScales[type] == true && _reminderEnabled[type] == true) {
+        final t = _reminderTimes[type]!;
+        if (type == ScaleType.uas7) {
+          await NotificationService().scheduleDailyReminder(id: type.index, title: 'UAS7 追蹤提醒', body: '請記錄今天的狀況。', hour: t.hour, minute: t.minute, payload: type.name);
+        } else {
+          await NotificationService().scheduleWeeklyReminder(id: type.index, title: '${type.name.toUpperCase()} 追蹤提醒', body: '今天是紀錄日。', dayOfWeek: _reminderDays[type]!, hour: t.hour, minute: t.minute, payload: type.name);
         }
-
-        // 3. 執行 Firebase 與 Google 登出
-        await FirebaseAuth.instance.signOut();
-        await GoogleSignIn().signOut();
-
-        // 4. 確保 Context 仍然有效後再進行頁面跳轉
-        if (!context.mounted) return;
-
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (ctx) => const LoginScreen()),
-              (route) => false,
-        );
-      } catch (e) {
-        debugPrint("登出過程發生錯誤: $e");
-        // 視需求可以在此處加入 SnackBar 提示使用者
       }
     }
   }
 
+  // --- ☁️ 數據備份與還原系統 (完整回歸) ---
+  void _refreshData() => setState(() { _trackerDataFuture = _getTrackerData(); });
+
+  Future<Map<String, dynamic>> _getTrackerData() async {
+    final today = DateTime.now();
+    final start = DateTime(today.year, today.month, today.day).subtract(const Duration(days: 8));
+    final all = await isarService.getAllRecords();
+    final uas7 = all.where((r) => r.scaleType == ScaleType.uas7).toList();
+    return {
+      'uas7Start': start,
+      'uas7Status': List.generate(14, (i) => uas7.any((r) => DateUtils.isSameDay(r.targetDate ?? r.date, start.add(Duration(days: i))))),
+      'uas7Records': uas7,
+      'adct': all.where((r) => r.scaleType == ScaleType.adct).toList()..sort((a, b) => b.date!.compareTo(a.date!)),
+      'poem': all.where((r) => r.scaleType == ScaleType.poem).toList()..sort((a, b) => b.date!.compareTo(a.date!)),
+      'scorad': all.where((r) => r.scaleType == ScaleType.scorad).toList()..sort((a, b) => b.date!.compareTo(a.date!)),
+    };
+  }
+
   Future<int> _calculateDirectorySize(Directory dir) async {
     int total = 0; if (!await dir.exists()) return 0;
-    await for (final entity in dir.list(recursive: true, followLinks: false)) { if (entity is File) total += await entity.length(); }
+    await for (final entity in dir.list(recursive: true)) { if (entity is File) total += await entity.length(); }
     return total;
   }
 
@@ -446,236 +330,114 @@ class _HomeScreenState extends State<HomeScreen> {
     return "$bytes B";
   }
 
+  Future<void> _handleManualBackup() async {
+    final GoogleSignInAccount? account = await _googleSignIn.signInSilently() ?? await _googleSignIn.signIn();
+    if (account == null) return;
+    if (_isSyncing) return;
+
+    final docDir = await getApplicationDocumentsDirectory();
+    final dbFile = File(p.join(docDir.path, 'eczema_data.isar'));
+    final photoDir = Directory(p.join(docDir.path, 'photos'));
+    final totalSize = (await dbFile.exists() ? await dbFile.length() : 0) + await _calculateDirectorySize(photoDir);
+
+    final bool confirmed = await showDialog<bool>(
+        context: context, builder: (ctx) => AlertDialog(
+      title: const Text("雲端備份說明"),
+      content: Text("將加密備份紀錄至 Google Drive。\n\n📦 預估大小：${_formatBytes(totalSize)}\n\n確定開始？"),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
+        ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("開始備份")),
+      ],
+    )
+    ) ?? false;
+
+    if (!confirmed) return;
+    setState(() => _isSyncing = true);
+    try {
+      final prog = ValueNotifier<String>("準備中...");
+      final per = ValueNotifier<double>(0.0);
+      await BackupDialogs.showProcessingDialog(context: context, title: "同步至雲端", progressNotifier: prog, percentNotifier: per, action: () async {
+        await cloudBackupService.runBackup(photoDir.path, appVersion: _appVersion, onProgress: (p) { prog.value = p.message; per.value = p.progress; });
+        (await SharedPreferences.getInstance()).setString('last_backup_time', DateTime.now().toIso8601String());
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ 備份完成")));
+    } catch (e) { if (mounted && e is BackupException) BackupErrorDialog.show(context, e); }
+    finally { if (mounted) setState(() => _isSyncing = false); }
+  }
+
+  Future<void> _handleRestore() async {
+    final bool confirmed = await BackupDialogs.confirmRestore(context);
+    if (!confirmed) return;
+    setState(() => _isSyncing = true);
+    try {
+      final prog = ValueNotifier<String>("正在聯繫雲端...");
+      final per = ValueNotifier<double>(0.0);
+      await BackupDialogs.showProcessingDialog(context: context, title: "還原數據中", progressNotifier: prog, percentNotifier: per, action: () async {
+        await cloudBackupService.runRestore(p.join((await getApplicationDocumentsDirectory()).path, 'photos'), onProgress: (p) { prog.value = p.message; per.value = p.progress; });
+        if (mounted) _refreshData();
+      });
+    } catch (e) { if (mounted && e is BackupException) BackupErrorDialog.show(context, e); }
+    finally { if (mounted) setState(() => _isSyncing = false); }
+  }
+
+  Future<void> _checkBackupRequirement() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastBackup = prefs.getString('last_backup_time');
+    final lastHint = prefs.getString('last_hint_show_time');
+    final recentCount = await isarService.getRecordsCountInLastDays(28);
+    DateTime now = DateTime.now();
+
+    if (recentCount > 0 && (lastBackup == null || now.difference(DateTime.parse(lastBackup)).inDays >= 28)) {
+      if (lastHint == null || now.difference(DateTime.parse(lastHint)).inDays >= 28) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text("您已有四週的紀錄未備份。"), action: SnackBarAction(label: "立即備份", onPressed: () => _handleManualBackup())));
+        await prefs.setString('last_hint_show_time', now.toIso8601String());
+      }
+    }
+  }
+
+  Future<void> _checkAndSilentBackup() async {
+    if (FirebaseAuth.instance.currentUser == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final lastSync = prefs.getString('last_silent_backup');
+    if (lastSync != null && DateTime.now().difference(DateTime.parse(lastSync)).inDays < 28) return;
+    try {
+      await cloudBackupService.runBackup(p.join((await getApplicationDocumentsDirectory()).path, 'photos'), appVersion: _appVersion);
+      await prefs.setString('last_silent_backup', DateTime.now().toIso8601String());
+    } catch (e) { debugPrint("靜默備份失敗"); }
+  }
+
+  // --- 🖥 UI 組件 (模組化拆分) ---
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
-    ImageProvider? avatarImage;
-    if (_localPhotoPath != null && File(_localPhotoPath!).existsSync()) {
-      avatarImage = FileImage(File(_localPhotoPath!));
-    } else if (user?.photoURL != null) {
-      avatarImage = NetworkImage(user!.photoURL!);
-    }
+    ImageProvider? avatar;
+    if (_localPhotoPath != null) avatar = FileImage(File(_localPhotoPath!));
+    else if (user?.photoURL != null) avatar = NetworkImage(user!.photoURL!);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: (isDarkMode ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(statusBarColor: Colors.transparent),
       child: Scaffold(
-        extendBodyBehindAppBar: false,
         appBar: AppBar(
-          centerTitle: false,
           toolbarHeight: 80,
           automaticallyImplyLeading: false,
-          titleSpacing: 0,
           backgroundColor: isDarkMode ? Colors.black : Colors.white,
           elevation: _isScrolled ? 3 : 0,
-          surfaceTintColor: Colors.transparent,
-          shadowColor: Colors.black.withOpacity(0.1),
           title: Container(
-            height: 75,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 1. 左側：頭像選單 (功能完整回歸版)
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 4, offset: const Offset(0, 2))],
-                  ),
-                  child: PopupMenuButton<String>(
-                    padding: EdgeInsets.zero,
-                    offset: const Offset(0, 56),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    onSelected: (val) async {
-                      if (!mounted) return;
-
-                      // --- 功能 A：更換頭像 ---
-                      if (val == 'photo') { _handleChangePhoto(); return; }
-
-                      // --- 功能 B：同步至雲端 (完整版) ---
-                      if (val == 'sync') {
-                        final GoogleSignInAccount? account = await _googleSignIn.signInSilently();
-                        if (account == null) { await _googleSignIn.signIn(); return; }
-                        if (_isSyncing) return;
-
-                        final docDir = await getApplicationDocumentsDirectory();
-                        final dbFile = File(p.join(docDir.path, 'eczema_data.isar'));
-                        final photoDir = Directory(p.join(docDir.path, 'photos'));
-                        final totalSize = (await dbFile.exists() ? await dbFile.length() : 0) + await _calculateDirectorySize(photoDir);
-
-                        final bool confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text("雲端備份說明"),
-                            content: Text("將加密備份紀錄至 Google Drive。\n\n📦 預估大小：${_formatBytes(totalSize)}\n\n建議在 Wi-Fi 環境下執行。確定開始？"),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("開始備份")),
-                            ],
-                          ),
-                        ) ?? false;
-
-                        if (!confirmed) return;
-
-                        setState(() => _isSyncing = true);
-                        try {
-                          final progressNotifier = ValueNotifier<String>("準備中...");
-                          final percentNotifier = ValueNotifier<double>(0.0);
-                          await BackupDialogs.showProcessingDialog(
-                            context: context,
-                            title: "正在同步至雲端",
-                            progressNotifier: progressNotifier,
-                            percentNotifier: percentNotifier,
-                            action: () async {
-                              await cloudBackupService.runBackup(
-                                photoDir.path,
-                                appVersion: _appVersion,
-                                onProgress: (p) {
-                                  progressNotifier.value = p.message;
-                                  percentNotifier.value = p.progress;
-                                },
-                              );
-                              final prefs = await SharedPreferences.getInstance();
-                              await prefs.setString('last_backup_time', DateTime.now().toIso8601String());
-                            },
-                          );
-                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ 雲端備份完成")));
-                        } catch (e) {
-                          if (mounted && e is BackupException) BackupErrorDialog.show(context, e);
-                        } finally {
-                          if (mounted) setState(() => _isSyncing = false);
-                        }
-                        return;
-                      }
-
-                      // --- 功能 C：從雲端恢復 (補回版) ---
-                      if (val == 'restore') {
-                        final bool confirmed = await BackupDialogs.confirmRestore(context);
-                        if (!confirmed) return;
-
-                        setState(() => _isSyncing = true);
-                        try {
-                          final progressNotifier = ValueNotifier<String>("正在聯繫雲端...");
-                          final percentNotifier = ValueNotifier<double>(0.0);
-                          await BackupDialogs.showProcessingDialog(
-                            context: context,
-                            title: "正在恢復數據",
-                            progressNotifier: progressNotifier,
-                            percentNotifier: percentNotifier,
-                            action: () async {
-                              final docDir = await getApplicationDocumentsDirectory();
-                              final String photoPath = p.join(docDir.path, 'photos');
-                              await cloudBackupService.runRestore(
-                                photoPath,
-                                onProgress: (p) {
-                                  progressNotifier.value = p.message;
-                                  percentNotifier.value = p.progress;
-                                },
-                              );
-                              if (mounted) _refreshData();
-                            },
-                          );
-                        } catch (e) {
-                          if (mounted && e is BackupException) BackupErrorDialog.show(context, e);
-                        } finally {
-                          if (mounted) setState(() => _isSyncing = false);
-                        }
-                        return;
-                      }
-
-                      // --- 功能 D：登出系統 ---
-                      if (val == 'logout') _handleLogout(context);
-                    },
-                    child: CircleAvatar(
-                      radius: 26,
-                      backgroundColor: isDarkMode ? Colors.grey.shade800 : Colors.white,
-                      child: CircleAvatar(
-                        radius: 24,
-                        backgroundColor: Colors.blue.shade100,
-                        backgroundImage: avatarImage,
-                        child: (avatarImage == null) ? Text((user?.displayName != null && user!.displayName!.trim().isNotEmpty) ? user.displayName!.trim().substring(0, 1).toUpperCase() : "U", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.blueGrey)) : null,
-                      ),
-                    ),
-                    itemBuilder: (ctx) => [
-                      const PopupMenuItem(value: 'photo', child: Row(children: [Icon(Icons.photo_library_rounded, color: Colors.blue), SizedBox(width: 12), Text("更換頭像")])),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(value: 'sync', child: Row(children: [
-                        _isSyncing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.cloud_upload_outlined, color: Colors.green),
-                        const SizedBox(width: 12), const Text("同步至雲端")
-                      ])),
-                      const PopupMenuDivider(),
-                      const PopupMenuItem(value: 'restore', child: Row(children: [Icon(Icons.cloud_download_outlined, color: Colors.orange), SizedBox(width: 12), Text("從雲端恢復數據")])), // 補回這行
-                      const PopupMenuDivider(),
-                      const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout_rounded, color: Colors.redAccent), SizedBox(width: 12), Text("登出系統")])),
-                    ],
-                  ),
-                ),
-
+                _buildAvatarMenu(user, avatar, isDarkMode),
                 const SizedBox(width: 16),
-
-                // 2. 中間：標題與信箱 (維持 top: 15.0 對齊)
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 15.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            "CareSync 健康隨行",
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19, color: isDarkMode ? Colors.white : Colors.blueGrey.shade900, letterSpacing: 0.3),
-                          ),
-                        ),
-                        if (user != null && user.email != null)
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              user.email!,
-                              style: TextStyle(fontSize: 12, color: isDarkMode ? Colors.white70 : Colors.grey.shade600, height: 1.2),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // 3. 右側：設定按鈕 (維持 bottom: 5.0 對齊)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 5.0),
-                  child: IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    icon: Icon(
-                      _isManagementMode ? Icons.check_circle : Icons.settings_suggest_rounded,
-                      color: _isManagementMode ? Colors.green : (isDarkMode ? Colors.white : Colors.blueGrey.shade700),
-                      size: 28,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _isManagementMode = !_isManagementMode;
-                        if (!_isManagementMode) _saveSettings();
-                      });
-                      if (_isManagementMode) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("已進入管理員模式"), behavior: SnackBarBehavior.floating));
-                      }
-                    },
-                  ),
-                ),
+                _buildTitleSelector(user, isDarkMode),
+                _buildSettingsButton(isDarkMode),
               ],
             ),
           ),
         ),
-        // 🚀 核心修正：使用 Column 讓廣告與滾動區域分離
         body: Column(
           children: [
-            // 1. 滾動內容區：使用 Expanded 佔滿剩餘空間
             Expanded(
               child: SingleChildScrollView(
                 controller: _scrollController,
@@ -685,111 +447,98 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildScaleGrid(context),
                     const SizedBox(height: 12),
                     _buildSecondaryNavigation(context),
-                    const SizedBox(height: 16),
-                    _buildSwiperHeader(),
-                    _buildProgressSwiper(),
-                    const SizedBox(height: 40), // 給內容留一點底部間距
+                    if (_currentCategory == AppCategory.dermatology) ...[
+                      const SizedBox(height: 16),
+                      _buildSwiperHeader(),
+                      _buildProgressSwiper(),
+                    ],
+                    const SizedBox(height: 40),
                   ],
                 ),
               ),
             ),
-
-            // 2. 固定廣告區：放在 Expanded 之外，它就會永遠「貼」在螢幕最下方
-            if (_isAdLoaded && _bannerAd != null)
-              Container(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                padding: EdgeInsets.only(
-                  top: 8,
-                  bottom: MediaQuery.of(context).padding.bottom + 8, // 🚀 自動避開 iPhone 底部的白條
-                ),
-                width: double.infinity,
-                alignment: Alignment.center,
-                child: SizedBox(
-                  width: _bannerAd!.size.width.toDouble(),
-                  height: _bannerAd!.size.height.toDouble(),
-                  child: AdWidget(ad: _bannerAd!),
-                ),
-              ),
+            if (_isAdLoaded && _bannerAd != null) _buildAdBanner(context),
           ],
         ),
       ),
     );
   }
 
-  // --- 補回所有業務方法 ---
-
-  Future<void> _checkBackupRequirement() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastBackupStr = prefs.getString('last_backup_time');
-    final lastHintShowStr = prefs.getString('last_hint_show_time'); // 🚀 新增提示紀錄
-    final recentRecords = await isarService.getRecordsCountInLastDays(28);
-
-    bool needsBackup = false;
-    DateTime now = DateTime.now();
-
-    // A. 判斷是否有資料且很久沒備份
-    if (recentRecords > 0) {
-      if (lastBackupStr == null) {
-        needsBackup = true;
-      } else {
-        DateTime? lastBackup = DateTime.tryParse(lastBackupStr);
-        if (lastBackup == null || now.difference(lastBackup).inDays >= 28) {
-          needsBackup = true;
-        }
-      }
-    }
-
-    // B. 如果需要備份，檢查是否「已間隔 4 週」才提示下一次
-    if (needsBackup) {
-      bool shouldShowHint = true;
-      if (lastHintShowStr != null) {
-        DateTime? lastHint = DateTime.tryParse(lastHintShowStr);
-        // 🚀 關鍵：如果距離上次提示不到 28 天，就先保持安靜
-        if (lastHint != null && now.difference(lastHint).inDays < 28) {
-          shouldShowHint = false;
-        }
-      }
-
-      if (shouldShowHint) {
-        _showBackupHint();
-        // 🚀 紀錄這次顯示提示的時間，確保 4 週內不會再 show 第二次
-        await prefs.setString('last_hint_show_time', now.toIso8601String());
-      }
-    }
+  Widget _buildAvatarMenu(User? user, ImageProvider? avatar, bool isDark) {
+    return Container(
+      width: 52, height: 52,
+      decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: const Offset(0, 2))]),
+      child: PopupMenuButton<String>(
+        onSelected: (val) {
+          if (val == 'photo') _handleChangePhoto();
+          else if (val == 'sync') _handleManualBackup();
+          else if (val == 'restore') _handleRestore();
+          else if (val == 'logout') _handleLogout(context);
+        },
+        child: CircleAvatar(
+          radius: 26, backgroundColor: isDark ? Colors.grey.shade800 : Colors.blue.shade50,
+          backgroundImage: avatar,
+          child: avatar == null ? Text(user?.displayName?.substring(0,1).toUpperCase() ?? "U") : null,
+        ),
+        itemBuilder: (ctx) => [
+          const PopupMenuItem(value: 'photo', child: Row(children: [Icon(Icons.photo_library, color: Colors.blue), SizedBox(width: 12), Text("更換頭像")])),
+          const PopupMenuDivider(),
+          PopupMenuItem(value: 'sync', child: Row(children: [
+            _isSyncing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.cloud_upload, color: Colors.green),
+            const SizedBox(width: 12), const Text("雲端備份數據")
+          ])),
+          const PopupMenuItem(value: 'restore', child: Row(children: [Icon(Icons.cloud_download, color: Colors.orange), SizedBox(width: 12), Text("從雲端還原數據")])),
+          const PopupMenuDivider(),
+          const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, color: Colors.redAccent), SizedBox(width: 12), Text("登出系統")])),
+        ],
+      ),
+    );
   }
 
-  void _showBackupHint() {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text("您已有四週的紀錄未備份。"), action: SnackBarAction(label: "立即同步", onPressed: () => _handleManualBackup())));
+  Widget _buildTitleSelector(User? user, bool isDark) {
+    String title = _currentCategory == AppCategory.dermatology ? "皮膚科" : _currentCategory == AppCategory.psychiatry ? "身心科" : "疼痛管理";
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 15.0),
+        child: PopupMenuButton<AppCategory>(
+          offset: const Offset(0, 45),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          onSelected: (cat) { setState(() => _currentCategory = cat); HapticFeedback.mediumImpact(); },
+          itemBuilder: (ctx) => [
+            const PopupMenuItem(value: AppCategory.dermatology, child: Text("皮膚科")),
+            const PopupMenuItem(value: AppCategory.psychiatry, child: Text("身心科")),
+            const PopupMenuItem(value: AppCategory.pain, child: Text("疼痛管理")),
+          ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19, color: isDark ? Colors.white : Colors.blueGrey.shade900)),
+                Icon(Icons.arrow_drop_down, color: isDark ? Colors.white70 : Colors.grey),
+              ]),
+              if (user?.email != null) Text(user!.email!, style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.grey.shade600)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
-  Future<void> _handleManualBackup() async {
-    final docDir = await getApplicationDocumentsDirectory();
-    await BackupDialogs.showProcessingDialog(context: context, title: "同步中", progressNotifier: ValueNotifier(""), percentNotifier: ValueNotifier(0.0), action: () async {
-      await cloudBackupService.runBackup(p.join(docDir.path, 'photos'), appVersion: _appVersion, onProgress: (p) {});
-      final prefs = await SharedPreferences.getInstance(); await prefs.setString('last_backup_time', DateTime.now().toIso8601String());
-    });
-  }
-
-  Future<void> _checkAndSilentBackup() async {
-    final user = FirebaseAuth.instance.currentUser; if (user == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-    final lastSyncStr = prefs.getString('last_silent_backup');
-    if (lastSyncStr != null && now.difference(DateTime.parse(lastSyncStr)).inDays < 28) return;
-    try {
-      final docDir = await getApplicationDocumentsDirectory();
-      await cloudBackupService.runBackup(p.join(docDir.path, 'photos'), appVersion: _appVersion);
-      await prefs.setString('last_silent_backup', now.toIso8601String());
-    } catch (e) { debugPrint("靜默備份失敗: $e"); }
+  Widget _buildSettingsButton(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5.0),
+      child: IconButton(
+        icon: Icon(_isManagementMode ? Icons.check_circle : Icons.settings_suggest_rounded, color: _isManagementMode ? Colors.green : (isDark ? Colors.white : Colors.blueGrey.shade700)),
+        onPressed: () {
+          setState(() => _isManagementMode = !_isManagementMode);
+          if (!_isManagementMode) _saveSettings(); // 🚀 補回：退出時存下修改
+        },
+      ),
+    );
   }
 
   Widget _buildScaleGrid(BuildContext context) {
-    const List<Map<String, dynamic>> scales = [
-      {'type': ScaleType.adct, 'title': 'ADCT', 'sub': '每周異膚控制', 'color': Colors.blue, 'icon': Icons.assignment_turned_in},
-      {'type': ScaleType.poem, 'title': 'POEM', 'sub': '每周濕疹檢測', 'color': Colors.orange, 'icon': Icons.opacity},
-      {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '每日蕁麻疹量表', 'color': Colors.teal, 'icon': Icons.calendar_month},
-      {'type': ScaleType.scorad, 'title': 'SCORAD', 'sub': '每周異膚綜合', 'color': Colors.purple, 'icon': Icons.biotech},
-    ];
+    final List<Map<String, dynamic>> scales = _categoryConfigs[_currentCategory]!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -797,48 +546,58 @@ class _HomeScreenState extends State<HomeScreen> {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: 1.2,
+            crossAxisCount: 2,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: 1.2
         ),
         itemCount: scales.length,
         itemBuilder: (ctx, i) {
-          final type = scales[i]['type'] as ScaleType;
+          final config = scales[i];
+          final dynamic type = config['type'];
+
+          // 判斷是否啟用 (皮膚科看設定，其餘預設開啟)
+          bool isEnabled = (type is ScaleType) ? (_enabledScales[type] ?? true) : true;
+
           return _AnimatedScaleCard(
-            scale: scales[i],
-            isEnabled: _enabledScales[type] ?? true,
+            scale: config,
+            isEnabled: isEnabled,
             isManagementMode: _isManagementMode,
             onTap: () async {
-              // 1. 管理員模式邏輯
-              if (_isManagementMode) {
+              // 1. 管理員模式：切換開關 (僅限皮膚科)
+              if (_isManagementMode && type is ScaleType) {
                 setState(() => _enabledScales[type] = !(_enabledScales[type] ?? true));
+                return;
               }
-              // 2. 一般模式且功能開啟
-              else if (_enabledScales[type] ?? true) {
+
+              // 2. 停用狀態提示
+              if (!isEnabled) {
+                showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(title: Text("${config['title']} 已關閉"), content: const Text("目前無需執行此量表。"))
+                );
+                return;
+              }
+
+              // 🚀 3. 統一進入問卷 (現在 PHQ-9 也是 ScaleType 了，會直接跑這段)
+              if (type is ScaleType) {
                 final res = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: type)),
+                    context,
+                    MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: type))
                 );
 
-                // 🚀 關鍵觸發點：當使用者填完量表回到首頁時
                 if (res == true && mounted) {
-                  // 💰 彈出全螢幕插頁廣告 (這會呼叫先前建立的 _showInterstitialAd 方法)
                   _showInterstitialAd();
-
-                  // 更新畫面上的進度數據與執行靜默備份
                   _refreshData();
                   _checkAndSilentBackup();
 
-                  // 視覺優化：平滑滾動至對應的進度卡片
-                  Future.delayed(const Duration(milliseconds: 300), () {
-                    if (mounted) _jumpToScalePage(type);
-                  });
+                  // 只有皮膚科有進度 Swiper，需要滑動回饋
+                  if (_currentCategory == AppCategory.dermatology) {
+                    Future.delayed(const Duration(milliseconds: 300), () {
+                      if (mounted) _jumpToScalePage(type);
+                    });
+                  }
                 }
-              }
-              // 3. 功能關閉時的提示
-              else {
-                _showDisabledScaleNotice(scales[i]['title'] as String, scales[i]['sub'] as String);
               }
             },
           );
@@ -847,31 +606,97 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showDisabledScaleNotice(String title, String sub) {
-    showDialog(context: context, builder: (ctx) => AlertDialog(title: Text("$title 功能已關閉"), content: Text("目前的病患照護計畫中，不需要執行「$sub」。\n\n如有需求，請洽詢主治醫師或護理人員開啟此量表。"), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("確定"))]));
-  }
-
   Widget _buildSecondaryNavigation(BuildContext context) {
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Row(children: [
-      Expanded(child: _buildSmallMenuButton(context, "查看趨勢", Icons.bar_chart_rounded, Colors.teal.shade700, () async { await Navigator.push(context, MaterialPageRoute(builder: (ctx) => const TrendChartScreen())); if (mounted) _refreshData(); })),
-      const SizedBox(width: 12),
-      Expanded(child: _buildSmallMenuButton(context, "歷史紀錄", Icons.list_alt_rounded, Colors.blueGrey.shade700, () async { await Navigator.push(context, MaterialPageRoute(builder: (ctx) => const HistoryListScreen())); if (mounted) _refreshData(); })),
-    ]));
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        children: [
+          // 🚀 建議趨勢圖也傳入科別，這樣圖表才不會混亂
+          Expanded(
+            child: _buildSmallMenuButton(
+                context,
+                "查看趨勢",
+                Icons.bar_chart_rounded,
+                Colors.teal.shade700,
+                    () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (ctx) => TrendChartScreen(currentCategory: _currentCategory))
+                )
+            ),
+          ),
+          const SizedBox(width: 12),
+          // ✅ 歷史紀錄：你補上的參數是正確的！
+          Expanded(
+            child: _buildSmallMenuButton(
+                context,
+                "歷史紀錄",
+                Icons.list_alt_rounded,
+                Colors.blueGrey.shade700,
+                    () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (ctx) => HistoryListScreen(currentCategory: _currentCategory))
+                )
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSmallMenuButton(BuildContext ctx, String label, IconData icon, Color color, VoidCallback onTap) {
-    return Container(
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: color.withOpacity(0.15), blurRadius: 4, offset: const Offset(0, 2))]),
-      child: Material(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(15), child: InkWell(borderRadius: BorderRadius.circular(15), onTap: () { HapticFeedback.lightImpact(); onTap(); }, child: Padding(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, size: 22, color: color), const SizedBox(width: 6), Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, letterSpacing: 1.0, color: color))))])))),
-    );
+    return Material(color: Theme.of(ctx).cardColor, borderRadius: BorderRadius.circular(15), child: InkWell(borderRadius: BorderRadius.circular(15), onTap: onTap, child: Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: color, size: 22), const SizedBox(width: 6), Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 17))]))));
   }
 
   Widget _buildSwiperHeader() {
     return Padding(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8), child: Row(children: [
-      const Icon(Icons.auto_awesome, size: 20, color: Colors.orangeAccent), const SizedBox(width: 8),
-      const Expanded(child: Text("臨床進度週期追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16), overflow: TextOverflow.ellipsis)),
-      InkWell(onTap: _showReminderSettingsModal, child: Row(children: [Icon(Icons.alarm_rounded, size: 16, color: Colors.blue.shade600), const SizedBox(width: 4), Text("提醒", style: TextStyle(fontSize: 14, color: Colors.blue.shade700, fontWeight: FontWeight.bold))])),
+      const Icon(Icons.auto_awesome, color: Colors.orangeAccent), const SizedBox(width: 8),
+      const Expanded(child: Text("臨床進度週期追蹤", style: TextStyle(fontWeight: FontWeight.bold))),
+      InkWell(onTap: _showReminderSettingsModal, child: const Text("設定提醒", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold))),
     ]));
+  }
+
+  Widget _buildProgressSwiper() {
+    final enabledTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
+    if (enabledTypes.isEmpty) return const SizedBox.shrink();
+    return SizedBox(height: 295, child: FutureBuilder<Map<String, dynamic>>(future: _trackerDataFuture ?? _getTrackerData(), builder: (ctx, snapshot) {
+      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+      return PageView.builder(controller: _pageController, itemCount: _virtualTotalCount, itemBuilder: (ctx, i) => _buildCardByType(enabledTypes[i % enabledTypes.length], snapshot.data!));
+    }));
+  }
+
+  Widget _buildCardByType(ScaleType type, Map<String, dynamic> data) {
+    switch (type) {
+      case ScaleType.uas7: return Uas7TrackerCard(startDate: data['uas7Start'], completionStatus: data['uas7Status'], history: data['uas7Records'], onRefresh: _refreshData);
+      default: return WeeklyTrackerCard(type: type, history: data[type.name] ?? [], onRefresh: _refreshData);
+    }
+  }
+
+  Widget _buildAdBanner(BuildContext context) {
+    return Container(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      padding: EdgeInsets.only(top: 8, bottom: MediaQuery.of(context).padding.bottom + 8),
+      width: double.infinity, alignment: Alignment.center,
+      child: SizedBox(width: _bannerAd!.size.width.toDouble(), height: _bannerAd!.size.height.toDouble(), child: AdWidget(ad: _bannerAd!)),
+    );
+  }
+
+  // --- 其餘輔助邏輯 ---
+  void _jumpToScalePage(ScaleType type) {
+    if (!_pageController.hasClients) return;
+    final enabled = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
+    int target = enabled.indexOf(type);
+    if (target != -1) {
+      int current = _pageController.page!.round();
+      _pageController.animateToPage(current + (target - (current % enabled.length)), duration: const Duration(milliseconds: 500), curve: Curves.easeInOutCubic);
+    }
+  }
+
+  Future<void> _handleLogout(BuildContext context) async {
+    final confirm = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text("確定登出？"), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("取消")), TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("登出", style: TextStyle(color: Colors.red)))]));
+    if (confirm == true) {
+      await FirebaseAuth.instance.signOut(); await _googleSignIn.signOut();
+      if (context.mounted) Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (ctx) => const LoginScreen()), (r) => false);
+    }
   }
 
   void _showReminderSettingsModal() {
@@ -897,105 +722,20 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Widget _buildProgressSwiper() {
-    final enabledTypes = ScaleType.values.where((t) => _enabledScales[t] == true).toList();
-    if (enabledTypes.isEmpty) return const SizedBox.shrink();
-
-    return Column(children: [
-      SizedBox(height: 295, child: FutureBuilder<Map<String, dynamic>>(future: _trackerDataFuture ?? _getTrackerData(), builder: (ctx, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) {
-          return const Center(child: Text("資料載入失敗"));
-        }
-
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        final data = snapshot.data!;
-        return PageView.builder(controller: _pageController, itemCount: _virtualTotalCount, itemBuilder: (ctx, i) => _buildCardByType(enabledTypes[i % enabledTypes.length], data));
-      })),
-      const SizedBox(height: 12),
-      ListenableBuilder(listenable: _pageController, builder: (ctx, child) {
-        int current = (_pageController.hasClients ? (_pageController.page ?? 0).round() : 0) % enabledTypes.length;
-        return Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(enabledTypes.length, (i) => AnimatedContainer(duration: const Duration(milliseconds: 300), margin: const EdgeInsets.symmetric(horizontal: 4), height: 8, width: current == i ? 20 : 8, decoration: BoxDecoration(color: current == i ? Colors.blue : Colors.grey.shade300, borderRadius: BorderRadius.circular(4)))));
-      }),
-    ]);
-  }
-
-  Widget _buildCardByType(ScaleType type, Map<String, dynamic> data) {
-    const Map<int, String> weekdaysShort = {1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '日'};
-    String? reminderText;
-    if (_reminderEnabled[type] == true && _reminderTimes.containsKey(type)) {
-      final timeStr = _reminderTimes[type]!.format(context);
-      reminderText = type == ScaleType.uas7 ? timeStr : "${weekdaysShort[_reminderDays[type] ?? 7]} $timeStr";
-    }
-    final onRemTap = () => _showReminderSettingsModal();
-    switch (type) {
-      case ScaleType.uas7: return Uas7TrackerCard(startDate: data['uas7Start'], completionStatus: data['uas7Status'], history: data['uas7Records'], onRefresh: _refreshData, reminderText: reminderText, onReminderTap: onRemTap);
-      case ScaleType.adct: return WeeklyTrackerCard(type: ScaleType.adct, history: data['adct'], onRefresh: _refreshData, reminderText: reminderText, onReminderTap: onRemTap);
-      case ScaleType.poem: return WeeklyTrackerCard(type: ScaleType.poem, history: data['poem'], onRefresh: _refreshData, reminderText: reminderText, onReminderTap: onRemTap);
-      case ScaleType.scorad: return WeeklyTrackerCard(type: ScaleType.scorad, history: data['scorad'], onRefresh: _refreshData, reminderText: reminderText, onReminderTap: onRemTap);
-      default: return const SizedBox.shrink();
-    }
-  }
-
-  void _jumpToScalePage(ScaleType type) {
-    if (!_pageController.hasClients) return;
-
-    final enabled =
-    ScaleType.values.where((t) => _enabledScales[t] == true).toList();
-
-    int target = enabled.indexOf(type);
-    if (target == -1) return;
-
-    final page = _pageController.page ?? _pageController.initialPage.toDouble();
-    int current = page.round();
-
-    _pageController.animateToPage(
-      current + (target - (current % enabled.length)),
-      duration: const Duration(milliseconds: 500),
-      curve: Curves.easeInOutCubic,
-    );
-  }
 }
 
-class _AnimatedScaleCard extends StatefulWidget {
+class _AnimatedScaleCard extends StatelessWidget {
   final Map<String, dynamic> scale; final bool isEnabled; final bool isManagementMode; final VoidCallback onTap;
   const _AnimatedScaleCard({required this.scale, required this.isEnabled, required this.isManagementMode, required this.onTap});
-  @override State<_AnimatedScaleCard> createState() => _AnimatedScaleCardState();
-}
-
-class _AnimatedScaleCardState extends State<_AnimatedScaleCard> {
-  double _scale = 1.0; double _elevation = 2.0;
-  @override Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(24),
-      onTapDown: (_) => setState(() { _scale = 0.96; _elevation = 8.0; }),
-      onTapUp: (_) => setState(() { _scale = 1.0; _elevation = 2.0; }),
-      onTapCancel: () => setState(() { _scale = 1.0; _elevation = 2.0; }),
-      onTap: widget.onTap,
-      child: AnimatedScale(
-        scale: _scale, duration: const Duration(milliseconds: 120), curve: Curves.easeOut,
-        child: AnimatedPhysicalModel(
-          duration: const Duration(milliseconds: 120), shape: BoxShape.rectangle, borderRadius: BorderRadius.circular(24),
-          elevation: widget.isEnabled ? _elevation : 0, color: Colors.transparent, shadowColor: (widget.scale['color'] as Color).withOpacity(0.3),
-          child: Stack(children: [
-            ColorFiltered(
-              colorFilter: ColorFilter.mode(widget.isEnabled ? Colors.transparent : Colors.grey, BlendMode.saturation),
-              child: Container(
-                width: double.infinity, decoration: BoxDecoration(color: widget.isEnabled ? Theme.of(context).cardColor : Theme.of(context).disabledColor.withOpacity(0.1), borderRadius: BorderRadius.circular(24), border: Border.all(color: widget.isEnabled ? widget.scale['color'].withOpacity(0.4) : Colors.grey.shade300, width: 1.5)),
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Icon(widget.scale['icon'], size: 40, color: widget.isEnabled ? widget.scale['color'] : Colors.grey), const SizedBox(height: 8),
-                  FittedBox(fit: BoxFit.scaleDown, child: Text(widget.scale['title'] as String, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: widget.isEnabled ? widget.scale['color'] : Colors.grey))),
-                  FittedBox(fit: BoxFit.scaleDown, child: Text(widget.scale['sub'] as String, style: TextStyle(fontSize: 14, color: widget.isEnabled ? widget.scale['color'].withOpacity(0.8) : Colors.grey, fontWeight: FontWeight.bold)))
-                ]),
-              ),
-            ),
-            if (widget.isManagementMode) Positioned(top: 10, right: 10, child: CircleAvatar(radius: 12, backgroundColor: widget.isEnabled ? Colors.green : Colors.red, child: Icon(widget.isEnabled ? Icons.visibility : Icons.visibility_off, size: 16, color: Colors.white)))
-          ]),
-        ),
-      ),
-    );
+  @override
+  Widget build(BuildContext context) {
+    final color = scale['color'] as Color;
+    return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(24), child: Container(
+      decoration: BoxDecoration(color: isEnabled ? Theme.of(context).cardColor : Colors.grey.withOpacity(0.1), borderRadius: BorderRadius.circular(24), border: Border.all(color: isEnabled ? color.withOpacity(0.4) : Colors.grey.shade300, width: 1.5)),
+      child: Stack(children: [
+        Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(scale['icon'], size: 40, color: isEnabled ? color : Colors.grey), const SizedBox(height: 8), Text(scale['title'], style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: isEnabled ? color : Colors.grey)), Text(scale['sub'], style: TextStyle(fontSize: 14, color: isEnabled ? color.withOpacity(0.8) : Colors.grey, fontWeight: FontWeight.bold))])),
+        if (isManagementMode && scale['type'] is ScaleType) Positioned(top: 10, right: 10, child: Icon(isEnabled ? Icons.visibility : Icons.visibility_off, size: 18, color: isEnabled ? Colors.green : Colors.red)),
+      ]),
+    ));
   }
 }

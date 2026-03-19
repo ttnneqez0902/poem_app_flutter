@@ -7,11 +7,17 @@ import 'package:intl/intl.dart';
 import '../models/poem_record.dart';
 import '../services/export_service.dart';
 import '../main.dart';
+import '../models/scale_config.dart'; // 🚀 確保有引入這個，才能認得 AppCategory
 import 'package:shared_preferences/shared_preferences.dart';
 
 
 class TrendChartScreen extends StatefulWidget {
-  const TrendChartScreen({super.key});
+  // 🚀 1. 新增這個必填參數
+  final AppCategory currentCategory;
+  const TrendChartScreen({
+    super.key,
+    required this.currentCategory, // 🚀 2. 在這裡接收參數
+  });
 
   @override
   State<TrendChartScreen> createState() => _TrendChartScreenState();
@@ -32,7 +38,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     _loadEnabledScales();
   }
 
-  Future<void> _loadEnabledScales() async {
+  _loadEnabledScales() async {
     final prefs = await SharedPreferences.getInstance();
     Map<ScaleType, bool> tempSettings = {};
     for (var type in ScaleType.values) {
@@ -41,12 +47,31 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
 
     setState(() {
       _enabledScales = tempSettings;
+
+      // 🚀 根據科別設定初始量表，避免身心科進去卻抓皮膚科量表
+      if (widget.currentCategory == AppCategory.psychiatry) {
+        _selectedScale = ScaleType.phq9;
+      } else if (widget.currentCategory == AppCategory.pain) {
+        _selectedScale = ScaleType.vas;
+      } else {
+        _selectedScale = ScaleType.adct;
+      }
+
+      // 防呆：如果預設量表被關閉了，改選該科別下第一個啟用的
       if (!(_enabledScales[_selectedScale] ?? true)) {
-        _selectedScale = _enabledScales.entries
-            .firstWhere((e) => e.value, orElse: () => _enabledScales.entries.first)
-            .key;
+        _selectedScale = ScaleType.values.firstWhere(
+              (t) => _isScaleInCategory(t, widget.currentCategory) && (_enabledScales[t] ?? true),
+          orElse: () => _selectedScale,
+        );
       }
     });
+  }
+
+// 輔助方法：判斷量表是否屬於該科別 (建議加在類別末尾)
+  bool _isScaleInCategory(ScaleType type, AppCategory category) {
+    if (category == AppCategory.dermatology) return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(type);
+    if (category == AppCategory.psychiatry) return [ScaleType.phq9, ScaleType.gad7].contains(type);
+    return type == ScaleType.vas;
   }
 
   // --- 📉 數據篩選邏輯 ---
@@ -71,6 +96,8 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     if (t == ScaleType.uas7) return 5;
     if (t == ScaleType.adct) return 7;
     if (t == ScaleType.poem) return 17;
+    if (t == ScaleType.phq9) return 10; // 🚀 PHQ-9 臨床警戒線 10
+    if (t == ScaleType.gad7) return 10; // 🚀 GAD-7 臨床警戒線 10
     return 25;
   }
 
@@ -231,8 +258,25 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     return FutureBuilder<List<PoemRecord>>(
       future: isarService.getAllRecords(),
       builder: (context, snapshot) {
-        final all = snapshot.data ?? [];
-        final filtered = _getThinnedRecords(all);
+        // 1. 先拿到原始數據
+        final allRawData = snapshot.data ?? [];
+
+        // 🚀 2. 在這裡加入你提供的「科別篩選」邏輯 (這就是你要加的地方！)
+        final categoryRecords = allRawData.where((r) {
+          switch (widget.currentCategory) {
+            case AppCategory.dermatology:
+              return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(r.scaleType);
+            case AppCategory.psychiatry:
+              return [ScaleType.phq9, ScaleType.gad7].contains(r.scaleType);
+            case AppCategory.pain:
+              return r.scaleType == ScaleType.vas;
+            default:
+              return false;
+          }
+        }).toList();
+
+        // 3. 最後再丟入原本的「時間/量表細分過濾」
+        final filtered = _getThinnedRecords(categoryRecords);
 
         return Scaffold(
           appBar: AppBar(
@@ -289,21 +333,25 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
   }
 
   Widget _buildScaleSelector() {
+    // 🚀 修改點：過濾選單，只顯示「目前科別」且「已啟用」的量表
     final List<ScaleType> availableScales = ScaleType.values
-        .where((type) => _enabledScales[type] ?? true)
-        .toList();
+        .where((type) =>
+    _isScaleInCategory(type, widget.currentCategory) && // 門神 1：科別正確
+        (_enabledScales[type] ?? true)                      // 門神 2：設定開啟
+    ).toList();
 
     return Container(
       padding: const EdgeInsets.all(16),
-      // 🚀 4. 移除外層藍色背景，讓它融入整體 UI
       child: DropdownButtonFormField<ScaleType>(
         value: _selectedScale,
-        // 🚀 5. 移除 color: Colors.black，改用系統預設字體顏色
-        style: TextStyle(fontSize: 18, color: Theme.of(context).textTheme.bodyLarge?.color, fontWeight: FontWeight.bold),
+        style: TextStyle(
+            fontSize: 18,
+            color: Theme.of(context).textTheme.bodyLarge?.color,
+            fontWeight: FontWeight.bold
+        ),
         decoration: InputDecoration(
             labelText: "分析量表目標",
             filled: true,
-            // 🚀 6. 移除 fillColor: Colors.white，改用 Theme 的 cardColor
             fillColor: Theme.of(context).cardColor,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)
         ),
@@ -324,7 +372,11 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       case ScaleType.poem: return "POEM 濕疹檢測 (每週)";
       case ScaleType.uas7: return "UAS7 活性紀錄 (每日)";
       case ScaleType.scorad: return "SCORAD 綜合評分 (每週)";
-      default: return type.toString();
+    // 🚀 新增身心科與疼痛
+      case ScaleType.phq9: return "PHQ-9 憂鬱情緒篩檢 (兩週)";
+      case ScaleType.gad7: return "GAD-7 焦慮狀況評估 (兩週)";
+      case ScaleType.vas: return "VAS 疼痛視覺類比 (即時)";
+      default: return type.toString().split('.').last.toUpperCase();
     }
   }
 
@@ -414,20 +466,13 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     String label;
 
     switch (_selectedScale) {
-      case ScaleType.uas7:
-        label = "UAS7 臨床警戒";
-        break;
-
-      case ScaleType.adct:
-        label = "ADCT 控制不佳";
-        break;
-
-      case ScaleType.poem:
-        label = "POEM 重度";
-        break;
-
-      default:
-        label = "SCORAD 重度";
+      case ScaleType.uas7: label = "UAS7 臨床警戒"; break;
+      case ScaleType.adct: label = "ADCT 控制不佳"; break;
+      case ScaleType.poem: label = "POEM 重度"; break;
+      case ScaleType.phq9: label = "PHQ-9 中度憂鬱"; break; // 🚀 新增
+      case ScaleType.gad7: label = "GAD-7 中度焦慮"; break; // 🚀 新增
+      case ScaleType.vas: label = "VAS 中度疼痛"; break;   // 🚀 新增
+      default: label = "臨床重度";
     }
 
     return Padding(
@@ -483,19 +528,32 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     );
   }
 
-  // --- 🔧 臨床輔助方法 ---
   double _getMaxYForScale(ScaleType t) {
     if (t == ScaleType.adct) return 24.0;
     if (t == ScaleType.poem) return 28.0;
     if (t == ScaleType.uas7) return 6.0;
+    if (t == ScaleType.phq9) return 27.0; // 🚀 PHQ-9 最高 27 分
+    if (t == ScaleType.gad7) return 21.0; // 🚀 GAD-7 最高 21 分
+    if (t == ScaleType.vas) return 10.0;  // 🚀 VAS 最高 10 分
     return 38.0;
   }
 
-  double _getIntervalForScale(ScaleType t) => t == ScaleType.uas7 ? 1.0 : 7.0;
+  // 優化間距：讓座標軸數字更整齊
+  double _getIntervalForScale(ScaleType t) {
+    if (t == ScaleType.uas7) return 1.0;
+    if (t == ScaleType.vas) return 2.0;    // 🚀 VAS 每 2 分一格
+    if (t == ScaleType.phq9) return 3.0;   // 🚀 PHQ-9 每 3 分一格 (因總分27)
+    return 5.0; // 其他（如 POEM）每 5 分一格
+  }
+
+  // 匹配首頁配色
   Color _getLineColor(ScaleType t) {
     if (t == ScaleType.uas7) return Colors.orangeAccent;
     if (t == ScaleType.adct) return Colors.teal;
     if (t == ScaleType.scorad) return Colors.purpleAccent;
+    if (t == ScaleType.phq9) return Colors.indigo;      // 🚀 身心科靛色
+    if (t == ScaleType.gad7) return Colors.green.shade700; // 🚀 焦慮綠色
+    if (t == ScaleType.vas) return Colors.redAccent;     // 🚀 疼痛紅色
     return Colors.blueAccent;
   }
   String _getScaleName(ScaleType type) => type.toString().split('.').last.toUpperCase();

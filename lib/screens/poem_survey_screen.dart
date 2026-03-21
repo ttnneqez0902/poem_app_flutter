@@ -159,7 +159,7 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     if (user == null || user.isAnonymous) return;
 
     try {
-      final unsynced = await isarService.getUnsyncedRecords(user.uid);
+      final unsynced = await isarService.getUnsyncedRecords();
       if (unsynced.length < 2) return;
 
       Map<String, List<PoemRecord>> monthlyBundles = {};

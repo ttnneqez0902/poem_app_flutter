@@ -98,8 +98,15 @@ class ExportService {
   // 🚀 [核心改動 1]：自動根據量表類型返回對應的臨床配置
   static ClinicalReportConfig _getConfigForScale(ScaleType type) {
     switch (type) {
+      case ScaleType.phq9:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 5, streakThreshold: 2, streakTotalIncrease: 5);
+      case ScaleType.gad7:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 4, streakThreshold: 2, streakTotalIncrease: 4);
+      case ScaleType.vas:
+        return const ClinicalReportConfig(rapidIncreaseThreshold: 3, streakThreshold: 2, streakTotalIncrease: 3);
       case ScaleType.adct:
         return const ClinicalReportConfig(rapidIncreaseThreshold: 5, streakThreshold: 2, streakTotalIncrease: 4);
+    // 🚀 補回缺失的皮膚科量表配置
       case ScaleType.uas7:
         return const ClinicalReportConfig(rapidIncreaseThreshold: 11, streakThreshold: 3, streakTotalIncrease: 9);
       case ScaleType.scorad:
@@ -286,7 +293,8 @@ class ExportService {
     final slope = den == 0 ? 0.0 : num / den;
     // 🚀 根據量表總分調整斜率門檻
     double worseningThreshold = 0.1;
-    if (type == ScaleType.scorad) worseningThreshold = 0.3; // SCORAD 需更顯著的斜率才算惡化
+    if (type == ScaleType.scorad) worseningThreshold = 0.3;
+    if (type == ScaleType.vas) worseningThreshold = 0.05; // 🚀 VAS 只要斜率 0.05 就該警示惡化
 
     String key = (slope >= worseningThreshold) ? 'worsening' : (slope <= -worseningThreshold ? 'improving' : 'stable');
 
@@ -373,16 +381,14 @@ class ExportService {
 
   static int _getClinicalThreshold(ScaleType t) {
     switch (t) {
-      case ScaleType.uas7:
-        return 5;
-      case ScaleType.adct:
-        return 7;
-      case ScaleType.poem:
-        return 17;
-      case ScaleType.scorad:
-        return 25;
-      default:
-        return 0;
+      case ScaleType.phq9: return 10; // 🚀 中度憂鬱門檻
+      case ScaleType.gad7: return 10; // 🚀 中度焦慮門檻
+      case ScaleType.vas: return 7;   // 🚀 重度疼痛門檻
+      case ScaleType.uas7: return 5;
+      case ScaleType.adct: return 7;
+      case ScaleType.poem: return 17;
+      case ScaleType.scorad: return 25;
+      default: return 0;
     }
   }
 
@@ -480,6 +486,24 @@ class ExportService {
 
   static Map<String, String> _getScaleMetadata(ScaleType t, bool isEn) {
     switch (t) {
+      case ScaleType.phq9:
+        return {
+          'title': 'PHQ-9',
+          'full_name': isEn ? 'PHQ-9: Patient Health Questionnaire' : 'PHQ-9 憂鬱情緒篩檢量表',
+          'disclaimer': isEn ? 'Score ≥ 10 suggests moderate to severe depression.' : '臨床研究顯示總分 ≥ 10 分可能代表中度以上之憂鬱情緒，建議尋求專業諮詢。'
+        };
+      case ScaleType.gad7:
+        return {
+          'title': 'GAD-7',
+          'full_name': isEn ? 'GAD-7: Generalized Anxiety Disorder' : 'GAD-7 焦慮狀況評估量表',
+          'disclaimer': isEn ? 'Score ≥ 10 indicates moderate anxiety.' : '總分 ≥ 10 分代表具中度以上焦慮傾向。'
+        };
+      case ScaleType.vas:
+        return {
+          'title': 'VAS',
+          'full_name': isEn ? 'VAS: Visual Analogue Scale' : 'VAS 疼痛視覺類比量表',
+          'disclaimer': isEn ? 'Score ≥ 7 indicates severe pain.' : '數值 ≥ 7 分通常代表處於重度疼痛狀態。'
+        };
       case ScaleType.adct: return {'title': 'ADCT', 'full_name': isEn ? 'ADCT: Atopic Dermatitis Control Tool' : 'ADCT 每周異膚控制量表', 'disclaimer': isEn ? 'Clinical alert threshold is 7 points.' : '臨床研究顯示 7 分為病情未控制之警示切點。'};
       case ScaleType.uas7: return {'title': 'UAS7', 'full_name': isEn ? 'UAS7: Urticaria Activity Score' : 'UAS7 每日蕁麻疹活性量表', 'disclaimer': isEn ? 'Weekly total ≥ 28 indicates severe urticaria activity.' : '週總分 ≥ 28 分通常代表蕁麻疹處於高度疾病活性狀態。'};
       case ScaleType.scorad:

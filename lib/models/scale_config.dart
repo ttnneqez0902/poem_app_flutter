@@ -1,34 +1,38 @@
+import 'package:flutter/material.dart'; // 🚀 必須引入，才能使用 Color
 import 'poem_record.dart';
+
 // 1. 定義科別枚舉
 enum AppCategory { dermatology, psychiatry, pain }
 
 class ScaleQuestion {
   final String label;
-  final List<String>? options; // 如果為 null 則顯示 Slider (如 VAS)
+  final List<String>? options;
   ScaleQuestion(this.label, {this.options});
 }
 
 class ScaleConfig {
   final String title;
   final List<ScaleQuestion> questions;
-  final int maxScore;        // 單題最高分
+  final int maxScore;
   final String description;
+  final Color color; // 🚀 補上這行，解決卡片顏色報錯
 
   ScaleConfig({
     required this.title,
     required this.questions,
     required this.maxScore,
     required this.description,
+    required this.color, // 🚀 構造函數也要加
   });
 
   static Map<ScaleType, ScaleConfig> allScales = {
     // ==========================================
-    // 🟦 皮膚科量表 (Dermatology)
+    // 🟦 肌膚照護 (Dermatology)
     // ==========================================
 
-    // 1. ADCT: 0-4 分 (異膚控制工具)
     ScaleType.adct: ScaleConfig(
-      title: "ADCT 評估",
+      title: "肌膚穩定追蹤", // 🚀 親民化
+      color: Colors.blue,
       maxScore: 4,
       description: "請根據過去一週的異位性皮膚炎控制狀況回答",
       questions: [
@@ -41,11 +45,11 @@ class ScaleConfig {
       ],
     ),
 
-    // 2. POEM: 0-4 分
     ScaleType.poem: ScaleConfig(
-      title: "POEM 檢測",
+      title: "這週皮膚還好嗎？", // 🚀 親民化
+      color: Colors.orange,
       maxScore: 4,
-      description: "過去一週皮膚受損程度評估 (異位性皮膚炎指標)",
+      description: "過去一週皮膚受損程度評估",
       questions: [
         ScaleQuestion("搔癢 (Itch)", options: ["0天", "1-2天", "3-4天", "5-6天", "每天"]),
         ScaleQuestion("睡眠障礙 (Sleep)", options: ["0天", "1-2天", "3-4天", "5-6天", "每天"]),
@@ -57,9 +61,9 @@ class ScaleConfig {
       ],
     ),
 
-    // 3. UAS7: 0-3 分
     ScaleType.uas7: ScaleConfig(
-      title: "蕁麻疹 UAS7",
+      title: "今日小紅點紀錄", // 🚀 親民化
+      color: Colors.teal,
       maxScore: 3,
       description: "依照過去 24 小時內症狀進行評分",
       questions: [
@@ -68,11 +72,11 @@ class ScaleConfig {
       ],
     ),
 
-    // 4. SCORAD 自測: 0-10 VAS
     ScaleType.scorad: ScaleConfig(
-      title: "SCORAD 自評",
+      title: "全身狀況掃描", // 🚀 親民化
+      color: Colors.purple,
       maxScore: 10,
-      description: "主觀症狀強度評估 (強度 0-3 分，感官 0-10 分)",
+      description: "主觀症狀強度評估",
       questions: [
         ScaleQuestion("1. 紅斑 (皮膚紅腫)", options: ["無", "輕微", "中度", "嚴重"]),
         ScaleQuestion("2. 水腫 / 丘疹", options: ["無", "輕微", "中度", "嚴重"]),
@@ -86,12 +90,12 @@ class ScaleConfig {
     ),
 
     // ==========================================
-    // 🧠 身心科量表 (Psychiatry)
+    // 🧠 情緒照護 (Psychiatry)
     // ==========================================
 
-    // PHQ-9: 憂鬱情緒篩檢 (0-3 分制)
     ScaleType.phq9: ScaleConfig(
-      title: "PHQ-9 憂鬱量表",
+      title: "心情起伏觀察", // 🚀 親民化
+      color: Colors.indigo,
       maxScore: 3,
       description: "在過去兩星期，有多少時間受以下問題困擾？",
       questions: [
@@ -107,9 +111,9 @@ class ScaleConfig {
       ],
     ),
 
-    // GAD-7: 焦慮狀況評估 (0-3 分制)
     ScaleType.gad7: ScaleConfig(
-      title: "GAD-7 焦慮量表",
+      title: "讓身體放輕鬆", // 🚀 親民化
+      color: Colors.green.shade700,
       maxScore: 3,
       description: "在過去兩星期，有多少時間受以下問題困擾？",
       questions: [
@@ -124,12 +128,12 @@ class ScaleConfig {
     ),
 
     // ==========================================
-    // ⚡ 疼痛管理 (Pain Management) - 🚀 新增
+    // ⚡ 疼痛管理 (Pain Management)
     // ==========================================
 
-    // 7. VAS: 0-10 分
     ScaleType.vas: ScaleConfig(
-      title: "疼痛 VAS 評估",
+      title: "痛痛程度紀錄", // 🚀 親民化
+      color: Colors.redAccent,
       maxScore: 10,
       description: "請評估您目前的疼痛程度 (0:無痛, 10:想像中最痛)",
       questions: [

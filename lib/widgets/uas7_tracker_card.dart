@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
+import 'package:marquee/marquee.dart'; // 🚀 1. 確保引入這個
 import '../models/poem_record.dart';
 import '../screens/poem_survey_screen.dart';
+import '../models/scale_config.dart'; // 🚀 2. 引入配置檔拿顏色與標題
 
 class Uas7TrackerCard extends StatefulWidget {
   final DateTime startDate;
   final List<bool> completionStatus;
   final List<PoemRecord> history;
   final VoidCallback? onRefresh;
-
-  // 🚀 1. 新增接收外部傳入的時間字串與點擊事件
   final String? reminderText;
   final VoidCallback? onReminderTap;
 
@@ -20,8 +20,8 @@ class Uas7TrackerCard extends StatefulWidget {
     required this.completionStatus,
     required this.history,
     this.onRefresh,
-    this.reminderText,   // 🚀 加入建構子
-    this.onReminderTap,  // 🚀 加入建構子
+    this.reminderText,
+    this.onReminderTap,
   });
 
   @override
@@ -35,6 +35,14 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday());
+  }
+
+  // --- 省略中間的 _scrollToToday, _getRecordAtDate 等方法 (保持不變) ---
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   void _scrollToToday() {
@@ -57,12 +65,6 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
     }
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
   PoemRecord? _getRecordAtDate(DateTime targetDate) {
     try {
       return widget.history.firstWhere((r) =>
@@ -75,7 +77,11 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   @override
   Widget build(BuildContext context) {
     final bool isTodayDone = _checkIfTodayDone();
-    final Color themeColor = Colors.teal;
+
+    // 🚀 3. 改為動態抓取顏色與標題
+    final Color themeColor = ScaleConfig.allScales[ScaleType.uas7]?.color ?? Colors.teal;
+    final String displayTitle = ScaleConfig.allScales[ScaleType.uas7]?.title ?? "小紅點紀錄";
+
     final DateTime nextDate = DateTime.now().add(const Duration(days: 1));
     final String nextExpectedDate = DateFormat('MM/dd').format(nextDate);
 
@@ -89,7 +95,7 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildHeader(isTodayDone, nextExpectedDate),
+            _buildHeader(isTodayDone, nextExpectedDate, displayTitle, themeColor), // 🚀 傳入動態內容
             const SizedBox(height: 12),
 
             SingleChildScrollView(
@@ -151,16 +157,34 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
     );
   }
 
-  Widget _buildHeader(bool isTodayDone, String nextExpectedDate) {
+  Widget _buildHeader(bool isTodayDone, String nextExpectedDate, String title, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text("UAS7七日追蹤", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey)),
+            // 🚀 4. 標題也改用跑馬燈，防止之後標題變長導致 Overflow
+            Expanded(
+              child: SizedBox(
+                height: 32,
+                child: Marquee(
+                  key: ValueKey(title), // 🚀 內容變化時觸發重跑
+                  text: title,
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                      color: color.withOpacity(0.8)
+                  ),
+                  blankSpace: 50.0,
+                  velocity: 30.0,
+                  pauseAfterRound: const Duration(hours: 1),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
 
-            // 🚀 2. 將原本的 icon 替換成可點擊的精緻時間按鈕
+            // 🚀 5. 提醒按鈕顏色改為與主題連動
             if (widget.reminderText != null && widget.onReminderTap != null)
               InkWell(
                 onTap: widget.onReminderTap,
@@ -168,17 +192,17 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1), // 截圖中的藍色底色
+                    color: color.withOpacity(0.1), // 🎨 使用主題色背景
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                    border: Border.all(color: color.withOpacity(0.3), width: 1),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.alarm_rounded, size: 14, color: Colors.blue.shade700),
+                      Icon(Icons.alarm_rounded, size: 14, color: color), // 🎨 使用主題色 Icon
                       const SizedBox(width: 4),
                       Text(
                         widget.reminderText!,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color), // 🎨
                       ),
                     ],
                   ),
@@ -197,6 +221,8 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
     );
   }
 
+  // --- 省略其餘輔助方法 (_buildDateSquare, _getTimeString, _checkIfTodayDone, _isSameDay) ---
+  // ... 請保持你原本 code 結尾那幾段不變
   Widget _buildDateSquare(DateTime date, bool isDone, bool isToday, bool isPastUnfinished, Color themeColor, PoemRecord? record) {
     return InkWell(
       onTap: () async {

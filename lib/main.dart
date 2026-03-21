@@ -125,7 +125,7 @@ Future<void> globalSyncTask() async {
 
   try {
     final unsynced =
-    await isarService.getUnsyncedRecords(user.uid);
+    await isarService.getUnsyncedRecords();
 
     if (unsynced.isEmpty) {
       debugPrint("📭 沒有需要同步資料");

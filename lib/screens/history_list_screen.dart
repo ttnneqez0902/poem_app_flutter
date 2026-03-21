@@ -111,7 +111,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
             _buildSingleChip("全部", null),
             ...availableScales.map((type) => Padding(
               padding: const EdgeInsets.only(left: 8.0),
-              child: _buildSingleChip(ScaleConfig.allScales[type]?.title ?? type.name, type),
+              child: _buildSingleChip(type.name.toUpperCase(), type),
             )),
           ],
         ),
@@ -143,11 +143,17 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   }
 
   Widget _buildRecordCard(BuildContext context, PoemRecord record) {
-    // 🚀 核心優化：直接從 Model 抓取顏色與判讀標籤
+    // 🚀 1. 關鍵修改：將量表名稱改為縮寫
+    String scaleTitle;
+    if (record.scaleType == ScaleType.phq9) {
+      scaleTitle = "PHQ-9";
+    } else if (record.scaleType == ScaleType.gad7) {
+      scaleTitle = "GAD-7";
+    } else {
+      scaleTitle = record.scaleType.name.toUpperCase(); // 例如：poem -> POEM
+    }
     final Color statusColor = record.severityColor;
     final String statusLabel = record.severityLabel;
-    final String scaleTitle = ScaleConfig.allScales[record.scaleType]?.title ?? "量表";
-
     final IconData iconData = _getScaleIcon(record.scaleType);
     final DateTime displayDate = record.targetDate ?? record.date ?? DateTime.now();
     final String targetDateStr = _getHumanizedDate(displayDate);
@@ -156,45 +162,58 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       key: Key(record.recordId ?? record.id.toString()),
       direction: DismissDirection.endToStart,
       background: _buildDeleteBackground(),
-      confirmDismiss: (dir) => _confirmDelete(context, record), // 🚀 修正：現在會正確等待對話框結果
+      confirmDismiss: (dir) => _confirmDelete(context, record),
       onDismissed: (dir) async {
         await isarService.deleteRecord(record.id);
         _refresh();
       },
       child: Card(
         margin: const EdgeInsets.only(top: 12),
-        clipBehavior: Clip.antiAlias,
+        clipBehavior: Clip.antiAlias, // 🚀 確保色條不會超出圓角
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: IntrinsicHeight(
-          child: Row(
+        elevation: 2,
+        child: Container(
+          // 🚀 保持 Border 設計，捨棄 IntrinsicHeight 以防止 Overflow
+          decoration: BoxDecoration(
+            border: Border(left: BorderSide(color: statusColor, width: 6)),
+          ),
+          child: ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            childrenPadding: EdgeInsets.zero,
+            shape: const Border(),
+            leading: CircleAvatar(
+              radius: 18,
+              backgroundColor: statusColor.withOpacity(0.1),
+              child: Icon(iconData, color: statusColor, size: 20),
+            ),
+            title: Text(
+              targetDateStr,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            // 🚀 這裡就會顯示「POEM：輕微 (5分)」
+            subtitle: Text(
+              "$scaleTitle：$statusLabel (${record.score ?? 0}分)",
+              style: TextStyle(
+                  fontSize: 13,
+                  color: statusColor.withOpacity(0.8),
+                  fontWeight: FontWeight.w600
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
             children: [
-              Container(width: 6, color: statusColor),
-              Expanded(
-                child: ExpansionTile(
-                  shape: const Border(),
-                  leading: CircleAvatar(
-                    backgroundColor: statusColor.withOpacity(0.1),
-                    child: Icon(iconData, color: statusColor),
-                  ),
-                  title: Text(targetDateStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  subtitle: Text(
-                    "$scaleTitle：$statusLabel (${record.score ?? 0}分)",
-                    style: TextStyle(fontSize: 14, color: statusColor.withOpacity(0.9), fontWeight: FontWeight.bold),
-                  ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildScoreDetails(record),
-                          if (record.imagePath != null && File(record.imagePath!).existsSync())
-                            _buildPhotoWithConsent(record), // 🚀 修正：名稱對齊
-                          const SizedBox(height: 16),
-                          _buildActionButtons(record),
-                        ],
-                      ),
-                    ),
+                    const Divider(height: 1),
+                    const SizedBox(height: 12),
+                    _buildScoreDetails(record),
+                    if (record.imagePath != null && File(record.imagePath!).existsSync())
+                      _buildPhotoWithConsent(record),
+                    const SizedBox(height: 16),
+                    _buildActionButtons(record),
                   ],
                 ),
               ),
@@ -220,8 +239,8 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
   String _getCategoryName(AppCategory cat) {
     switch (cat) {
-      case AppCategory.dermatology: return "皮膚科";
-      case AppCategory.psychiatry: return "身心科";
+      case AppCategory.dermatology: return "肌膚照護"; // 🚀 修改
+      case AppCategory.psychiatry: return "情緒照護";  // 🚀 修改
       case AppCategory.pain: return "疼痛管理";
     }
   }
@@ -254,12 +273,17 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
   Widget _buildPhotoWithConsent(PoemRecord record) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Divider(height: 32),
-      const Text("患部照片紀錄：", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-      const SizedBox(height: 12),
+      const SizedBox(height: 16),
+      const Text("患部照片紀錄：", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+      const SizedBox(height: 8),
       ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.file(File(record.imagePath!), height: 200, width: double.infinity, fit: BoxFit.cover),
+        child: Image.file(
+            File(record.imagePath!),
+            height: 180, // 🚀 稍微縮小高度，讓小手機也能一次看完
+            width: double.infinity,
+            fit: BoxFit.cover
+        ),
       ),
       StatefulBuilder(builder: (context, setCardState) {
         return SwitchListTile(

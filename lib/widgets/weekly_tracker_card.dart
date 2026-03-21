@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
+import 'package:marquee/marquee.dart'; // 🚀 1. 確保引入這個
 import '../models/poem_record.dart';
 import '../screens/poem_survey_screen.dart';
+import '../models/scale_config.dart';
 
 class WeeklyTrackerCard extends StatefulWidget {
   final ScaleType type;
@@ -170,18 +172,33 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 🚀 關鍵修正：用 Expanded 包住標題，設定單行與溢出省略號 (...)
+            // 🚀 2. 關鍵修正：將 Text 換成跑馬燈
             Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.blueGrey),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+              child: SizedBox(
+                height: 32, // 設定高度，確保跑馬燈能正常顯示
+                child: Marquee(
+                  key: ValueKey(widget.type), // 🚀 關鍵：卡片切換時，Key 跟著 type 變，觸發重跑
+                  text: "$title 紀錄進度", // 顯示「這週皮膚還好嗎？ 紀錄進度」
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                      color: color.withOpacity(0.8)
+                  ),
+                  scrollAxis: Axis.horizontal,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  blankSpace: 50.0,      // 文字循環間距
+                  velocity: 30.0,        // 跑動速度
+                  pauseAfterRound: const Duration(hours: 1), // 跑完一圈停 3 秒，讓使用者能看清楚
+                  startPadding: 0.0,
+                  accelerationDuration: const Duration(seconds: 1),
+                  accelerationCurve: Curves.linear,
+                  decelerationDuration: const Duration(milliseconds: 500),
+                  decelerationCurve: Curves.easeOut,
+                ),
               ),
             ),
-            const SizedBox(width: 8), // 增加一點安全間距，避免文字跟按鈕黏死
+            const SizedBox(width: 8),
 
-            // 🚀 2. 將原本的 icon 替換成可點擊的精緻時間按鈕
             if (widget.reminderText != null && widget.onReminderTap != null)
               InkWell(
                 onTap: widget.onReminderTap,
@@ -189,17 +206,16 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1), // 截圖中的藍色底色
+                    color: color.withOpacity(0.1), // 🚀 使用該量表的主色
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                    border: Border.all(color: color.withOpacity(0.3), width: 1), // 🚀 同步顏色
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.alarm_rounded, size: 14, color: Colors.blue.shade700),
-                      const SizedBox(width: 4),
+                      Icon(Icons.alarm_rounded, size: 14, color: color), // 🚀
                       Text(
                         widget.reminderText!,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color), // 🚀
                       ),
                     ],
                   ),
@@ -274,6 +290,12 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     );
   }
 
-  String _getScaleTitle(ScaleType t) => {ScaleType.adct: "ADCT每周檢測", ScaleType.poem: "POEM每周檢測", ScaleType.scorad: "SCORAD每周檢測"}[t] ?? "量表追蹤";
-  Color _getScaleColor(ScaleType t) => {ScaleType.adct: Colors.teal, ScaleType.poem: Colors.blue, ScaleType.scorad: Colors.indigo}[t] ?? Colors.grey;
+// ✅ 修改後：直接連動你在首頁改好的親民標題
+  String _getScaleTitle(ScaleType t) {
+    return ScaleConfig.allScales[t]?.title ?? "量表紀錄";
+  }
+// ✅ 修改後：
+  Color _getScaleColor(ScaleType t) {
+    return ScaleConfig.allScales[t]?.color ?? Colors.blueGrey;
+  }
 }

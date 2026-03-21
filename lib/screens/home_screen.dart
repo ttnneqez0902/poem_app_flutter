@@ -14,6 +14,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -46,6 +47,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isSyncing = false;
   bool _isScrolled = false;
   bool _isManagementMode = false;
+  bool _isBoy = true;             // 🚀 2. 補上這個漏掉的性別變數
+  DateTime? _childBirthday;
+  DateTime? _childDueDate; // 🚀 新增這行：預產期
 
   late final PageController _pageController = PageController(
     initialPage: _virtualInitialPage,
@@ -100,66 +104,40 @@ class _HomeScreenState extends State<HomeScreen> {
     onDbSwapped: (newIsar) => isarService.updateInstance(newIsar),
   );
 
-  // --- 科別內容配置表 ---
   // --- 科別內容配置表 (親民圖示版) ---
-  Map<AppCategory, List<Map<String, dynamic>>> get _categoryConfigs =>
-      {
-        AppCategory.dermatology: [
-          {
-            'type': ScaleType.adct,
-            'title': 'ADCT',
-            'sub': '肌膚穩定追蹤',
-            'color': Colors.blue,
-            'icon': Icons.health_and_safety_rounded
-          }, // 🛡️ 安全防護感
-          {
-            'type': ScaleType.poem,
-            'title': 'POEM',
-            'sub': '這週皮膚還好嗎？',
-            'color': Colors.orange,
-            'icon': Icons.water_drop_rounded
-          }, // 💧 潤膚/水分感
-          {
-            'type': ScaleType.uas7,
-            'title': 'UAS7',
-            'sub': '今日小紅點紀錄',
-            'color': Colors.teal,
-            'icon': Icons.flare_rounded
-          }, // ✨ 像紅點也像星星
-          {
-            'type': ScaleType.scorad,
-            'title': 'SCORAD',
-            'sub': '全身狀況掃描',
-            'color': Colors.purple,
-            'icon': Icons.person_search_rounded
-          }, // 👤 全身檢查感
-        ],
-        AppCategory.psychiatry: [
-          {
-            'type': ScaleType.phq9,
-            'title': 'PHQ-9',
-            'sub': '心情起伏觀察',
-            'color': Colors.indigo,
-            'icon': Icons.face_retouching_natural_rounded
-          }, // 😊 照顧臉孔/心情
-          {
-            'type': ScaleType.gad7,
-            'title': 'GAD-7',
-            'sub': '讓身體放輕鬆',
-            'color': Colors.green.shade700,
-            'icon': Icons.self_improvement_rounded
-          }, // 🧘 冥想/放鬆
-        ],
-        AppCategory.pain: [
-          {
-            'type': ScaleType.vas,
-            'title': 'VAS',
-            'sub': '痛痛程度紀錄',
-            'color': Colors.redAccent,
-            'icon': Icons.healing_rounded
-          }, // 🩹 療癒/OK蹦感
-        ],
-      };
+  Map<AppCategory, List<Map<String, dynamic>>> get _categoryConfigs => {
+    AppCategory.dermatology: [
+      {'type': ScaleType.adct, 'title': 'ADCT', 'sub': '肌膚穩定追蹤', 'color': Colors.blue, 'icon': Icons.health_and_safety_rounded},
+      {'type': ScaleType.poem, 'title': 'POEM', 'sub': '這週皮膚還好嗎？', 'color': Colors.orange, 'icon': Icons.water_drop_rounded},
+      {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '今日小紅點紀錄', 'color': Colors.teal, 'icon': Icons.flare_rounded},
+      {'type': ScaleType.scorad, 'title': 'SCORAD', 'sub': '全身狀況掃描', 'color': Colors.purple, 'icon': Icons.person_search_rounded},
+    ],
+    AppCategory.psychiatry: [
+      {'type': ScaleType.phq9, 'title': 'PHQ-9', 'sub': '心情起伏觀察', 'color': Colors.indigo, 'icon': Icons.face_retouching_natural_rounded},
+      {'type': ScaleType.gad7, 'title': 'GAD-7', 'sub': '讓身體放輕鬆', 'color': Colors.green.shade700, 'icon': Icons.self_improvement_rounded},
+    ],
+    AppCategory.pain: [
+      {'type': ScaleType.vas, 'title': 'VAS', 'sub': '痛痛程度紀錄', 'color': Colors.redAccent, 'icon': Icons.healing_rounded},
+    ],
+    // 🚀 新增：風濕免疫
+    AppCategory.rheumatology: [
+      {'type': ScaleType.haq, 'title': 'HAQ', 'sub': '日常活動評估', 'color': Colors.brown, 'icon': Icons.accessibility_new_rounded},
+      {'type': ScaleType.vas, 'title': 'VAS', 'sub': '關節疼痛追蹤', 'color': Colors.redAccent, 'icon': Icons.bolt_rounded},
+    ],
+    // 🚀 新增：腸胃科
+    AppCategory.gastro: [
+      {'type': ScaleType.bristol, 'title': 'Bristol', 'sub': '便便形態紀錄', 'color': Colors.brown.shade700, 'icon': Icons.water_drop_rounded},
+      {'type': ScaleType.ibs_sss, 'title': 'IBS-SSS', 'sub': '腸胃嚴重度', 'color': Colors.teal, 'icon': Icons.monitor_heart_rounded},
+    ],
+    // 🚀 新增：女性健康
+    AppCategory.womens: [
+      {'type': ScaleType.cycle, 'title': '週期紀錄', 'sub': '生理期規律觀察', 'color': Colors.pinkAccent, 'icon': Icons.calendar_month_rounded},
+    ],
+    // 🚀 新增：兒科發展
+    AppCategory.peds: [
+      {'type': ScaleType.growth, 'title': '生長數據', 'sub': '身高體重頭圍', 'color': Colors.lightBlue, 'icon': Icons.child_care_rounded},
+    ],
+  };
 
   @override
   void initState() {
@@ -346,6 +324,13 @@ class _HomeScreenState extends State<HomeScreen> {
         final m = prefs.getInt('reminder_minute_${type.name}') ?? 0;
         _reminderTimes[type] = TimeOfDay(hour: h, minute: m);
       }
+      // 🚀 補齊兒科資料讀取
+      _isBoy = prefs.getBool('child_is_boy') ?? true;
+      final bStr = prefs.getString('child_birthday');
+      if (bStr != null) _childBirthday = DateTime.parse(bStr);
+
+      final dStr = prefs.getString('child_due_date'); // 🚀 預產期
+      if (dStr != null) _childDueDate = DateTime.parse(dStr);
     });
     _scheduleClinicalReminders();
   }
@@ -706,47 +691,42 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildTitleSelector(User? user, bool isDark) {
-// 🚀 修改這裡的判斷文字
-    String title = _currentCategory == AppCategory.dermatology
-        ? "肌膚照護" // 原：皮膚科
-        : _currentCategory == AppCategory.psychiatry
-        ? "情緒照護" // 原：身心科
-        : "疼痛管理";
+    // 🚀 定義顯示名稱對應表
+    final Map<AppCategory, String> catNames = {
+      AppCategory.dermatology: "肌膚照護",
+      AppCategory.psychiatry: "情緒照護",
+      AppCategory.pain: "疼痛管理",
+      AppCategory.rheumatology: "風濕免疫",
+      AppCategory.gastro: "腸胃紀錄",
+      AppCategory.womens: "女性健康",
+      AppCategory.peds: "兒科發展",
+    };
+
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.only(top: 15.0),
         child: PopupMenuButton<AppCategory>(
-          offset: const Offset(0, 45),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16)),
           onSelected: (cat) {
-            setState(() => _currentCategory = cat);
+            setState(() {
+              _currentCategory = cat;
+              // 🚀 強制跳回虛擬初始頁面，確保索引重新計算，避免卡片顯示不匹配
+              _pageController.jumpToPage(_virtualInitialPage);
+            });
             HapticFeedback.mediumImpact();
           },
-          itemBuilder: (ctx) =>
-          [
-            const PopupMenuItem(
-                value: AppCategory.dermatology, child: Text("肌膚照護")),
-            // 🚀 修改
-            const PopupMenuItem(
-                value: AppCategory.psychiatry, child: Text("情緒照護")),
-            // 🚀 修改
-            const PopupMenuItem(
-                value: AppCategory.pain, child: Text("疼痛管理")),
-          ],
+          itemBuilder: (ctx) => catNames.entries.map((e) =>
+              PopupMenuItem(value: e.key, child: Text(e.value))
+          ).toList(),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                Text(title, style: TextStyle(fontWeight: FontWeight.bold,
-                    fontSize: 19,
-                    color: isDark ? Colors.white : Colors.blueGrey.shade900)),
-                Icon(Icons.arrow_drop_down,
-                    color: isDark ? Colors.white70 : Colors.grey),
+                Text(catNames[_currentCategory] ?? "健康追蹤",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19, color: isDark ? Colors.white : Colors.blueGrey.shade900)),
+                Icon(Icons.arrow_drop_down, color: isDark ? Colors.white70 : Colors.grey),
               ]),
-              if (user?.email != null) Text(user!.email!, style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? Colors.white70 : Colors.grey.shade600)),
+              if (user?.email != null)
+                Text(user!.email!, style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.grey.shade600)),
             ],
           ),
         ),
@@ -772,13 +752,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildScaleGrid(BuildContext context) {
-    final List<
-        Map<String, dynamic>> scales = _categoryConfigs[_currentCategory]!;
+    final List<Map<String, dynamic>> scales = _categoryConfigs[_currentCategory]!;
+
+// 🚀 計算總數：如果是兒科手動加 1
+    int totalCount = scales.length;
+    if (_currentCategory == AppCategory.peds) totalCount += 1;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GridView.builder(
-        padding: EdgeInsets.zero, // 🚀 關鍵：加入這行，強制清除 GridView 自帶的內距
+        padding: EdgeInsets.zero,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -787,45 +770,48 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSpacing: 16,
             childAspectRatio: 1.1
         ),
-        itemCount: scales.length,
+        itemCount: totalCount, // ✅ 這裡要用 totalCount，剛才手誤寫成 finalCount
         itemBuilder: (ctx, i) {
-          final config = scales[i];
-          final dynamic type = config['type'];
+          // 🚀 2. 兒科特殊處理：固定在第二個位置 (Index 1) 插入「寶寶資料」按鈕
+          if (_currentCategory == AppCategory.peds && i == 1) {
+            return _buildChildProfileButton();
+          }
 
-          // 判斷是否啟用 (皮膚科看設定，其餘預設開啟)
-          bool isEnabled = (type is ScaleType)
-              ? (_enabledScales[type] ?? true)
-              : true;
+// 計算正確的資料索引 (兒科 Index 1 被佔走，後面的要往回扣)
+          int configIndex = (_currentCategory == AppCategory.peds && i > 1) ? i - 1 : i;
+          if (configIndex >= scales.length) return const SizedBox.shrink();
+          final config = scales[configIndex];
+          final dynamic type = config['type'];
+          bool isEnabled = (type is ScaleType) ? (_enabledScales[type] ?? true) : true;
 
           return _AnimatedScaleCard(
             scale: config,
             isEnabled: isEnabled,
             isManagementMode: _isManagementMode,
             onTap: () async {
-              // 1. 管理員模式：切換開關 (僅限皮膚科)
+              // 管理員模式切換
               if (_isManagementMode && type is ScaleType) {
-                setState(() =>
-                _enabledScales[type] = !(_enabledScales[type] ?? true));
+                setState(() => _enabledScales[type] = !(_enabledScales[type] ?? true));
                 return;
               }
 
-              // 2. 停用狀態提示
+              // 停用提示
               if (!isEnabled) {
                 showDialog(
                     context: context,
-                    builder: (ctx) =>
-                        AlertDialog(title: Text("${config['title']} 已關閉"),
-                            content: const Text("目前無需執行此量表。"))
+                    builder: (ctx) => AlertDialog(
+                        title: Text("${config['title']} 已關閉"),
+                        content: const Text("目前無需執行此量表。")
+                    )
                 );
                 return;
               }
 
-              // 🚀 3. 統一進入問卷 (現在 PHQ-9 也是 ScaleType 了，會直接跑這段)
+              // 進入問卷邏輯
               if (type is ScaleType) {
                 final res = await Navigator.push<bool>(
                     context,
-                    MaterialPageRoute(
-                        builder: (ctx) => PoemSurveyScreen(initialType: type))
+                    MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: type))
                 );
 
                 if (res == true && mounted) {
@@ -833,7 +819,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   _refreshData();
                   _checkAndSilentBackup();
 
-                  // 只有皮膚科有進度 Swiper，需要滑動回饋
                   if (_currentCategory == AppCategory.dermatology) {
                     Future.delayed(const Duration(milliseconds: 300), () {
                       if (mounted) _jumpToScalePage(type);
@@ -842,10 +827,113 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
               }
             },
-            category: _currentCategory, // 🚀 這裡要記得傳進去
+            category: _currentCategory,
           );
         },
       ),
+    );
+  }
+
+  // 🚀 畫出那個「寶寶資料」卡片
+  Widget _buildChildProfileButton() {
+    final bool isSet = _childBirthday != null;
+    return _AnimatedScaleCard(
+      category: _currentCategory,
+      isEnabled: true,
+      isManagementMode: false,
+      scale: {
+        'title': '寶寶資料',
+        'sub': isSet ? '${_isBoy ? "男寶" : "女寶"} · ${DateFormat('MM/dd').format(_childBirthday!)}' : '點擊設定資料',
+        'color': Colors.orangeAccent,
+        'icon': Icons.settings_accessibility_rounded,
+      },
+      onTap: _showChildProfileEditor, // 🚀 點擊後彈出編輯器
+    );
+  }
+
+  // 🚀 彈出的編輯器畫面 (含預產期)
+  void _showChildProfileEditor() {
+    bool tempIsBoy = _isBoy;
+    DateTime tempBirthday = _childBirthday ?? DateTime.now();
+    DateTime tempDueDate = _childDueDate ?? DateTime.now();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+      builder: (ctx) {
+        return StatefulBuilder(builder: (context, setModalState) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("寶寶基本資料設定", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 24),
+
+                // 1. 性別切換
+                ListTile(
+                  leading: Icon(tempIsBoy ? Icons.boy_rounded : Icons.girl_rounded, color: tempIsBoy ? Colors.blue : Colors.pink),
+                  title: const Text("寶寶性別"),
+                  trailing: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: true, label: Text("男"), icon: Icon(Icons.male)),
+                      ButtonSegment(value: false, label: Text("女"), icon: Icon(Icons.female)),
+                    ],
+                    selected: {tempIsBoy},
+                    onSelectionChanged: (v) => setModalState(() => tempIsBoy = v.first),
+                  ),
+                ),
+                const Divider(),
+
+                // 2. 出生日期
+                ListTile(
+                  leading: const Icon(Icons.cake_rounded, color: Colors.orange),
+                  title: const Text("出生日期"),
+                  subtitle: Text(DateFormat('yyyy / MM / dd').format(tempBirthday)),
+                  onTap: () async {
+                    final picked = await showDatePicker(context: context, initialDate: tempBirthday, firstDate: DateTime(2020), lastDate: DateTime.now());
+                    if (picked != null) setModalState(() => tempBirthday = picked);
+                  },
+                ),
+
+                // 3. 預產期
+                ListTile(
+                  leading: const Icon(Icons.child_friendly_rounded, color: Colors.teal),
+                  title: const Text("預產期"),
+                  subtitle: Text(DateFormat('yyyy / MM / dd').format(tempDueDate)),
+                  onTap: () async {
+                    final picked = await showDatePicker(context: context, initialDate: tempDueDate, firstDate: DateTime(2020), lastDate: DateTime(2027));
+                    if (picked != null) setModalState(() => tempDueDate = picked);
+                  },
+                ),
+
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity, height: 55,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
+                    onPressed: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('child_is_boy', tempIsBoy);
+                      await prefs.setString('child_birthday', tempBirthday.toIso8601String());
+                      await prefs.setString('child_due_date', tempDueDate.toIso8601String());
+
+                      setState(() {
+                        _isBoy = tempIsBoy;
+                        _childBirthday = tempBirthday;
+                        _childDueDate = tempDueDate;
+                      });
+                      Navigator.pop(ctx);
+                    },
+                    child: const Text("確認儲存", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          );
+        });
+      },
     );
   }
 
@@ -976,27 +1064,63 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
-  // 🚀 記得在 _HomeScreenState 裡面也補上這個輔助方法
   bool _isScaleInCategory(ScaleType type, AppCategory category) {
-    if (category == AppCategory.dermatology)
-      return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad]
-          .contains(type);
-    if (category == AppCategory.psychiatry)
-      return [ScaleType.phq9, ScaleType.gad7].contains(type);
-    return type == ScaleType.vas;
+    switch (category) {
+      case AppCategory.dermatology:
+        return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(type);
+      case AppCategory.psychiatry:
+        return [ScaleType.phq9, ScaleType.gad7].contains(type);
+      case AppCategory.pain:
+        return type == ScaleType.vas;
+      case AppCategory.rheumatology:
+        return [ScaleType.haq, ScaleType.vas].contains(type);
+      case AppCategory.gastro:
+        return [ScaleType.bristol, ScaleType.ibs_sss].contains(type);
+      case AppCategory.womens:
+        return type == ScaleType.cycle;
+      case AppCategory.peds:
+        return type == ScaleType.growth;
+      default:
+        return false;
+    }
   }
 
   Widget _buildCardByType(ScaleType type, Map<String, dynamic> data) {
+    final history = data[type.name] as List<PoemRecord>? ?? [];
+
     switch (type) {
       case ScaleType.uas7:
-        return Uas7TrackerCard(startDate: data['uas7Start'],
+        return Uas7TrackerCard(
+            startDate: data['uas7Start'],
             completionStatus: data['uas7Status'],
             history: data['uas7Records'],
-            onRefresh: _refreshData);
+            onRefresh: _refreshData
+        );
+
+    // 🚀 兒科特殊處理
+      case ScaleType.growth:
+      // 根據最新一筆紀錄判定單位 (優先序：身高 > 體重 > 頭圍)
+        String unit = "cm";
+        if (history.isNotEmpty) {
+          final last = history.first;
+          if (last.weight != null && last.height == null) unit = "kg";
+        }
+        return WeeklyTrackerCard(
+            type: type,
+            history: history,
+            unit: unit, // 👈 傳入單位
+            onRefresh: _refreshData
+        );
+
+    // 🚀 腸胃科與其他量表
+      case ScaleType.bristol:
+        return WeeklyTrackerCard(type: type, history: history, unit: "型", onRefresh: _refreshData);
+
+      case ScaleType.haq:
+        return WeeklyTrackerCard(type: type, history: history, unit: "分", onRefresh: _refreshData);
+
       default:
-        return WeeklyTrackerCard(type: type,
-            history: data[type.name] ?? [],
-            onRefresh: _refreshData);
+        return WeeklyTrackerCard(type: type, history: history, unit: "分", onRefresh: _refreshData);
     }
   }
 

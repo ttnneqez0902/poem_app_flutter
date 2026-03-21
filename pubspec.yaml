@@ -54,6 +54,7 @@ dependencies:
   sign_in_with_apple: ^7.0.1
   flutter_line_sdk: ^2.6.2
   marquee: ^2.3.0
+  connectivity_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

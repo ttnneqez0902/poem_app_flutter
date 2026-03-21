@@ -123,6 +123,7 @@ class ExportService {
       ScaleType targetScale, {
         ClinicalReportConfig? config, // 改為可選
         bool isEnglish = false,
+        String? growthMode, // 🚀 補上這個具名參數
       }) async {
     // 🚀 整體包覆 try-catch，確保任何資源加載或渲染錯誤不會導致 App 閃退
     try {
@@ -132,11 +133,29 @@ class ExportService {
       final labels = _getLabels(isEnglish);
       final dateFmt = isEnglish ? 'MMM dd, yyyy' : 'yyyy/MM/dd';
 
-      final validRecords = records.where((r) =>
-      (r.targetDate ?? r.date) != null &&
-          r.scaleType == targetScale &&
-          r.score != null
-      ).toList();
+// 🚀 1. 動態抓取數值 (解決兒科欄位不同的問題)
+      final validRecords = records.where((r) {
+        final date = r.targetDate ?? r.date;
+        if (date == null || r.scaleType != targetScale) return false;
+
+        // 判定數值是否存在
+        if (targetScale == ScaleType.growth) {
+          if (growthMode == 'weight') return r.weight != null;
+          if (growthMode == 'head') return r.headCircumference != null;
+          return r.height != null;
+        }
+        return r.score != null;
+      }).toList();
+
+      // 🚀 2. 為計算邏輯建立一個統一的「虛擬分數」列表
+// 這樣下方的 _analyzeTrend 和 _calculateAlerts 才能無縫接軌
+      for (var r in validRecords) {
+        if (targetScale == ScaleType.growth) {
+          if (growthMode == 'weight') r.score = r.weight?.toInt();
+          else if (growthMode == 'head') r.score = r.headCircumference?.toInt();
+          else r.score = r.height?.toInt();
+        }
+      }
 
       if (validRecords.isEmpty) return;
 
@@ -169,7 +188,7 @@ class ExportService {
       );
 
       final pdf = pw.Document();
-      final scaleMeta = _getScaleMetadata(targetScale, isEnglish);
+      final scaleMeta = _getScaleMetadata(targetScale, isEnglish, growthMode);
       final photoCache = await _loadPhotoCache(validRecords);
 
       // --- Page 1: 封面與核心趨勢摘要 ---
@@ -191,7 +210,8 @@ class ExportService {
               _coverField(labels['obs_period']!,
                   "${DateFormat(dateFmt).format(validRecords.first.targetDate ?? validRecords.first.date!)} - ${DateFormat(dateFmt).format(validRecords.last.targetDate ?? validRecords.last.date!)}"),
               pw.Spacer(flex: 1),
-              _buildTrendSummary(targetScale, trend, cvText, alerts, activeConfig, recentRecords.length, labels, isEnglish),
+              // 🚀 關鍵修正：傳入 growthMode 給 Summary
+              _buildTrendSummary(targetScale, trend, cvText, alerts, activeConfig, recentRecords.length, labels, isEnglish, growthMode),
               pw.Spacer(flex: 3),
               _buildDisclaimerBox(labels['clinical_alert']!, scaleMeta['disclaimer']!),
             ],
@@ -291,14 +311,29 @@ class ExportService {
       den += pow(xs[i] - mx, 2);
     }
     final slope = den == 0 ? 0.0 : num / den;
+    bool isGrowth = type == ScaleType.growth;
+
     // 🚀 根據量表總分調整斜率門檻
     double worseningThreshold = 0.1;
     if (type == ScaleType.scorad) worseningThreshold = 0.3;
     if (type == ScaleType.vas) worseningThreshold = 0.05; // 🚀 VAS 只要斜率 0.05 就該警示惡化
 
-    String key = (slope >= worseningThreshold) ? 'worsening' : (slope <= -worseningThreshold ? 'improving' : 'stable');
+    String key;
+    if (isGrowth) {
+      // 👶 兒科：斜率向下 (<-0.1) 代表生長停滯或體重減輕 = 惡化
+      key = (slope <= -worseningThreshold) ? 'worsening' : (slope >= worseningThreshold ? 'improving' : 'stable');
+    } else {
+      // 🏥 一般醫療：斜率向上 (>=0.1) 代表分數變高 = 惡化
+      key = (slope >= worseningThreshold) ? 'worsening' : (slope <= -worseningThreshold ? 'improving' : 'stable');
+    }
 
-    return ScoreTrend(labelKey: key, displayLabel: labels[key]!, delta: secondAvg - firstAvg, changeRate: firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg) * 100 : 0, slope: slope);
+    return ScoreTrend(
+        labelKey: key,
+        displayLabel: labels[key]!,
+        delta: secondAvg - firstAvg,
+        changeRate: firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg) * 100 : 0,
+        slope: slope
+    );
   }
   static ClinicalAlerts _calculateAlerts(
       List<PoemRecord> sorted,
@@ -350,7 +385,10 @@ class ExportService {
 
   // --- UI 組件 (已修正參數一致性) ---
 
-  static pw.Widget _buildTrendSummary(ScaleType type, ScoreTrend t, String cv, ClinicalAlerts alerts, ClinicalReportConfig c, int n, Map<String, String> labels, bool isEn) {
+  static pw.Widget _buildTrendSummary(ScaleType type, ScoreTrend t, String cv, ClinicalAlerts alerts, ClinicalReportConfig c, int n, Map<String, String> labels, bool isEn, String? growthMode) {
+
+    // ✅ 宣告移到這裡（方法頂部）
+    final unit = _getUnit(type, growthMode);
     return pw.Container(
       padding: const pw.EdgeInsets.all(18),
       decoration: const pw.BoxDecoration(color: PdfColors.blue50, borderRadius: pw.BorderRadius.all(pw.Radius.circular(10))),
@@ -360,9 +398,13 @@ class ExportService {
           pw.Text("${labels['sample_size']}: $n", style: const pw.TextStyle(fontSize: 10)),
         ]),
         pw.Divider(color: PdfColors.blue200),
+
         _trendRow(labels['score_trend']!, "${t.displayLabel} (Slope: ${t.slope.toStringAsFixed(2)} /day)", valueColor: t.labelKey == 'worsening' ? PdfColors.red700 : (t.labelKey == 'improving' ? PdfColors.green700 : null)),
-        _trendRow(labels['change_mag']!, "${t.delta > 0 ? '↑ +' : '↓ '}${t.delta.toStringAsFixed(1)} pts (${t.changeRate.toStringAsFixed(1)}%)"),
+        _trendRow(labels['change_mag']!, "${t.delta > 0 ? '↑ +' : '↓ '}${t.delta.toStringAsFixed(1)} $unit (${t.changeRate.toStringAsFixed(1)}%)"),
         _trendRow(labels['cv']!, cv),
+        // 🚀 修正：只有「非生長數據」才顯示急性發作次數
+        if (type != ScaleType.growth)
+          _trendRow(labels['rapid_event']!, "${alerts.rapidCount} ${isEn ? 'Events' : '次'} (Limit: ${c.rapidIncreaseThreshold})"),
         _trendRow(
           isEn ? "Clinical Threshold" : "臨床警戒值",
             "≥ ${_getClinicalThreshold(type)} pts"
@@ -484,7 +526,19 @@ class ExportService {
     return cache;
   }
 
-  static Map<String, String> _getScaleMetadata(ScaleType t, bool isEn) {
+  static Map<String, String> _getScaleMetadata(ScaleType t, bool isEn, String? growthMode) {
+    if (t == ScaleType.growth) {
+      String name = "身高";
+      if (growthMode == 'weight') name = "體重";
+      if (growthMode == 'head') name = "頭圍";
+
+      return {
+        'title': isEn ? 'Growth: $growthMode' : '生長數據: $name',
+        'full_name': isEn ? 'World Health Organization (WHO) Growth Standards' : 'WHO 兒童生長發育標準',
+        'disclaimer': isEn ? 'Data is compared against WHO standard percentiles.' : '生長數據建議與 WHO 標準百分位曲線對照，若出現百分位大幅跨層請諮詢小兒科醫師。'
+      };
+    }
+
     switch (t) {
       case ScaleType.phq9:
         return {
@@ -515,6 +569,16 @@ class ExportService {
       default: return {'title': 'POEM', 'full_name': isEn ? 'POEM: Patient-Oriented Eczema Measure' : 'POEM 每周濕疹檢測量表', 'disclaimer': isEn ? 'Total > 16 indicates severe eczema.' : '總分超過 16 分代表目前處於重度濕疹病灶。'};
     }
   }
+
+  // 🚀 增加一個單位 Helper
+  static String _getUnit(ScaleType type, String? growthMode) {
+    if (type == ScaleType.growth) {
+      return growthMode == 'weight' ? "kg" : "cm";
+    }
+    if (type == ScaleType.bristol) return "型";
+    return "pts";
+  }
+
 
   static List<WeeklyStat> _buildWeeklyStats(List<PoemRecord> records) {
     if (records.isEmpty) return [];

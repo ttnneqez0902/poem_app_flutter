@@ -41,6 +41,20 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   File? _image;
   final ImagePicker _picker = ImagePicker();
 
+  final TextEditingController _heightController = TextEditingController();
+  final TextEditingController _weightController = TextEditingController();
+  final TextEditingController _headController = TextEditingController();
+
+  // 🚀 1. 補上 HAQ 的題目清單
+  final List<String> haqQuestions = [
+    "穿衣服、繫鞋帶或扣扣子",
+    "洗澡、擦乾身體或洗頭髮",
+    "從椅子起身（不使用扶手）",
+    "在戶外平地行走",
+    "拿取裝滿水的杯子並喝水"
+  ];
+
+
   @override
   void initState() {
     super.initState();
@@ -56,16 +70,27 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
         _image = File(widget.oldRecord!.imagePath!);
       }
       _imageConsent = widget.oldRecord!.imageConsent ?? true;
+
+      // ✅ 修正：編輯模式下，把舊的數值填入控制器
+      if (_selectedScale == ScaleType.growth) {
+        _heightController.text = widget.oldRecord!.height?.toString() ?? "";
+        _weightController.text = widget.oldRecord!.weight?.toString() ?? "";
+        _headController.text = widget.oldRecord!.headCircumference?.toString() ?? "";
+      }
     } else {
-      // 🚀 新增模式（含補填）
+      // 🚀 新增模式
       _recordDate = widget.targetDate ?? DateTime.now();
       _answers = List.filled(config.questions.length, -1);
       _answerTimestamps = List.filled(config.questions.length, null);
     }
   }
 
+
   @override
   void dispose() {
+    _heightController.dispose();
+    _weightController.dispose();
+    _headController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -103,19 +128,31 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
   void _saveAndFinish() async {
     if (_isSaving) return;
 
-    // 🚀 防呆驗證：確保沒有漏寫的題目
-    if (_answers.contains(-1)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("請完成所有量表題目後再提交"), behavior: SnackBarBehavior.floating)
-      );
-      return;
+    // 🚀 1. 判定是否為兒科生長數據
+    final bool isGrowth = _selectedScale == ScaleType.growth;
+
+    // 🚀 2. 防呆驗證區分
+    if (isGrowth) {
+      // 檢查輸入框是否為空
+      if (_heightController.text.isEmpty || _weightController.text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("請至少輸入身高與體重數據"), behavior: SnackBarBehavior.floating)
+        );
+        return;
+      }
+    } else {
+      // 一般量表：檢查是否有漏寫題目
+      if (_answers.contains(-1)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("請完成所有量表題目後再提交"), behavior: SnackBarBehavior.floating)
+        );
+        return;
+      }
     }
 
     setState(() => _isSaving = true);
 
     try {
-      final total = _answers.fold(0, (a, b) => a + b);
-
       // 1. 建立或更新紀錄物件
       final record = widget.oldRecord ?? PoemRecord();
       record
@@ -123,24 +160,41 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
         ..date = DateTime.now()
         ..targetDate = _recordDate
         ..scaleType = _selectedScale
-        ..score = total
-        ..answers = _answers
         ..imagePath = _image?.path
         ..imageConsent = _imageConsent
         ..isSynced = false;
 
-      record.ensureId(); // 🚀 建議在這裡呼叫，確保本地 UUID 與雲端完全一致
+      // 🚀 3. 資料賦值邏輯分流
+      if (isGrowth) {
+        // 兒科：儲存物理數值，總分設為 0
+        record.height = double.tryParse(_heightController.text);
+        record.weight = double.tryParse(_weightController.text);
+        record.headCircumference = double.tryParse(_headController.text);
+        record.score = 0;
+        record.answers = []; // 生長紀錄不需要題目答案
+      } else {
+        // 一般量表：儲存總分與每一題答案
+        final total = _answers.fold(0, (a, b) => a + b);
+        record.score = total;
+        record.answers = _answers;
+        // 確保清除生長欄位，避免髒數據
+        record.height = null;
+        record.weight = null;
+        record.headCircumference = null;
+      }
+
+      record.ensureId();
 
       // 2. 本地儲存 (Isar)
       await isarService.saveRecord(record);
-      debugPrint("✅ 本地 Isar 儲存成功");
+      debugPrint("✅ 本地 Isar 儲存成功 (${isGrowth ? '生長數據' : '評分量表'})");
 
       // 3. 觸發背景同步邏輯
       syncRecordsOptimized();
 
       if (mounted) {
         HapticFeedback.heavyImpact();
-        Navigator.pop(context, true); // 回傳 true 告知首頁刷新數據
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
@@ -151,6 +205,102 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  Widget _buildGrowthInput(int idx) {
+    String label = "";
+    String unit = "";
+    IconData icon = Icons.straighten_rounded;
+    TextEditingController controller;
+
+    // 🚀 修正：使用傳入的 idx 而不是未定義的 _currentStep
+    switch (idx) {
+      case 0:
+        label = "目前身高";
+        unit = "cm";
+        icon = Icons.height_rounded;
+        controller = _heightController;
+        break;
+      case 1:
+        label = "目前體重";
+        unit = "kg";
+        icon = Icons.monitor_weight_rounded;
+        controller = _weightController;
+        break;
+      case 2:
+        label = "目前頭圍";
+        unit = "cm";
+        icon = Icons.face_rounded;
+        controller = _headController;
+        break;
+      default:
+        return const SizedBox();
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+      child: Column(
+        children: [
+          // 視覺引導圖示
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.lightBlue.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 60, color: Colors.lightBlue),
+          ),
+          const SizedBox(height: 24),
+          Text(label, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 40),
+
+          // 🚀 核心：超大數字輸入框
+          TextField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textAlign: TextAlign.center,
+            autofocus: true, // 進入頁面自動彈起鍵盤
+            style: const TextStyle(
+                fontSize: 64,
+                fontWeight: FontWeight.w900,
+                color: Colors.lightBlue,
+                letterSpacing: 2
+            ),
+            decoration: InputDecoration(
+              hintText: "0.0",
+              suffixText: unit,
+              suffixStyle: const TextStyle(fontSize: 24, color: Colors.grey, fontWeight: FontWeight.normal),
+              border: InputBorder.none, // 移除預設邊框改用下方的自定義底線
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+            onChanged: (val) {
+              // 🚀 觸發 setState 讓底部的「下一題」按鈕能即時偵測到有填寫文字
+              setState(() {});
+            },
+          ),
+
+          // 自定義裝飾底線
+          Container(
+            height: 4,
+            width: 200,
+            decoration: BoxDecoration(
+              color: Colors.lightBlue.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          const SizedBox(height: 40),
+          Text(
+            "請輸入寶寶今日的${label.substring(2)}",
+            style: const TextStyle(color: Colors.blueGrey, fontSize: 16),
+          ),
+          const Text(
+            "(精確至小數點後一位)",
+            style: TextStyle(color: Colors.grey, fontSize: 14),
+          ),
+        ],
+      ),
+    );
   }
 
   // 🚀 修正後的優化同步：使用批量更新避免巢狀交易
@@ -208,6 +358,31 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
 
   // --- UI 構建 ---
 
+  // 在 _PoemSurveyScreenState 內的 build 方法
+  Widget _buildRheumatologyUI(int idx) {
+    // 🚀 修正 1：判斷 ScaleType，並使用 _answers[idx] 來存取數據
+    if (_selectedScale == ScaleType.vas) {
+      return VasSlider(
+        // VAS 通常只有一題，所以 index 固定是 0
+        value: _answers[idx] == -1 ? 0 : _answers[idx],
+        onChanged: (val) => setState(() {
+          _answers[idx] = val;
+          _answerTimestamps[idx] = DateTime.now();
+        }),
+      );
+    } else if (_selectedScale == ScaleType.haq) {
+      // HAQ 則會顯示對應 index 的問題
+      return HaqOptionSelector(
+        question: haqQuestions[idx],
+        selectedValue: _answers[idx],
+        onSelected: (val) {
+          _onOptionSelected(idx, val); // 使用原本的跳頁邏輯
+        },
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
     final config = _currentConfig;
@@ -245,9 +420,34 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
               onPageChanged: (idx) => setState(() => _currentPage = idx),
               itemCount: totalPages,
               itemBuilder: (ctx, idx) {
+                // 1. 處理「題目頁」 (Index 小於題目總數)
                 if (idx < config.questions.length) {
+
+                  // 🚀 關鍵新增：如果是「兒科生長數據」，顯示專屬輸入框
+                  if (_selectedScale == ScaleType.growth) {
+                    return _buildGrowthInput(idx);
+                  }
+
+                  // 🏥 如果是「風濕科量表 (VAS/HAQ)」，顯示特殊介面
+                  if (_selectedScale == ScaleType.vas || _selectedScale == ScaleType.haq) {
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        children: [
+                          Text("題目 ${idx + 1} / ${config.questions.length}",
+                              style: const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 20),
+                          _buildRheumatologyUI(idx),
+                        ],
+                      ),
+                    );
+                  }
+
+                  // 📋 其他標準量表 (ADCT, PHQ-9, POEM...) 使用標準卡片
                   return _buildQuestionCard(config.questions[idx], idx, isDarkMode);
+
                 } else {
+                  // 2. 處理最後一頁：照片錄入
                   return _buildStandalonePhotoPage(isDarkMode);
                 }
               },
@@ -258,6 +458,7 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
       bottomNavigationBar: _buildBottomBar(totalPages),
     );
   }
+
 
   Widget _buildQuestionCard(ScaleQuestion q, int idx, bool isDarkMode) {
     final bool isSlider = q.options == null;
@@ -435,9 +636,19 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
                   if (isLastPage) {
                     _saveAndFinish();
                   } else {
-                    // 🚀 關鍵驗證：若未選答案則不准跳下一頁
-                    if (_currentPage < questionsCount && _answers[_currentPage] == -1) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("請先選擇一個選項"), behavior: SnackBarBehavior.floating));
+                    // 🚀 兒科與一般量表的驗證邏輯區分
+                    bool canGoNext = false;
+                    if (_selectedScale == ScaleType.growth) {
+                      // 檢查當前輸入框是否有填
+                      if (_currentPage == 0) canGoNext = _heightController.text.isNotEmpty;
+                      else if (_currentPage == 1) canGoNext = _weightController.text.isNotEmpty;
+                      else if (_currentPage == 2) canGoNext = _headController.text.isNotEmpty;
+                    } else {
+                      canGoNext = _answers[_currentPage] != -1;
+                    }
+
+                    if (!canGoNext) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("請填寫數值後再繼續")));
                       return;
                     }
                     _pageController.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
@@ -458,5 +669,52 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
         ),
       ),
     );
+  }
+}
+// 🦴 疼痛管理：VAS 滑桿元件
+class VasSlider extends StatelessWidget {
+  final int value;
+  final ValueChanged<int> onChanged;
+  const VasSlider({super.key, required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Text(
+            "目前疼痛感：$value 分",
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.redAccent),
+          ),
+        ),
+        Slider(
+          value: value.toDouble(),
+          min: 0, max: 10, divisions: 10,
+          label: value.toString(),
+          activeColor: Color.lerp(Colors.green, Colors.red, value / 10),
+          onChanged: (v) => onChanged(v.toInt()),
+        ),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [Text("完全不痛", style: TextStyle(color: Colors.green)), Text("極度疼痛", style: TextStyle(color: Colors.red))],
+        ),
+      ],
+    );
+  }
+}
+
+// 🦴 風濕免疫：HAQ 選項選擇器
+class HaqOptionSelector extends StatelessWidget {
+  final String question; final int selectedValue; final ValueChanged<int> onSelected;
+  const HaqOptionSelector({super.key, required this.question, required this.selectedValue, required this.onSelected});
+  @override
+  Widget build(BuildContext context) {
+    final List<String> options = ["無困難", "稍有困難", "頗為困難", "無法執行"];
+    return Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(question, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 12),
+      Wrap(spacing: 8, children: List.generate(4, (i) => ChoiceChip(label: Text(options[i]), selected: selectedValue == i, onSelected: (_) => onSelected(i)))),
+    ])));
   }
 }

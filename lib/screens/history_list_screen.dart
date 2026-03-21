@@ -111,7 +111,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
             _buildSingleChip("全部", null),
             ...availableScales.map((type) => Padding(
               padding: const EdgeInsets.only(left: 8.0),
-              child: _buildSingleChip(type.name.toUpperCase(), type),
+              child: _buildSingleChip(_getShortScaleName(type), type), // 🚀 使用縮寫中文
             )),
           ],
         ),
@@ -143,17 +143,35 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   }
 
   Widget _buildRecordCard(BuildContext context, PoemRecord record) {
-    // 🚀 1. 關鍵修改：將量表名稱改為縮寫
-    String scaleTitle;
-    if (record.scaleType == ScaleType.phq9) {
-      scaleTitle = "PHQ-9";
-    } else if (record.scaleType == ScaleType.gad7) {
-      scaleTitle = "GAD-7";
+    // 🚀 1. 決定量表縮寫標題
+    String scaleTitle = record.scaleType.name.toUpperCase();
+    if (record.scaleType == ScaleType.phq9) scaleTitle = "PHQ-9";
+    if (record.scaleType == ScaleType.gad7) scaleTitle = "GAD-7";
+
+    // 🚀 2. 關鍵修正：動態處理數值與單位 (解決兒科與腸胃科顯示錯誤)
+    String valueDisplay = "";
+    if (record.scaleType == ScaleType.growth) {
+      // 兒科邏輯：判斷目前紀錄的是哪一項
+      if (record.height != null) valueDisplay = "${record.height} cm";
+      else if (record.weight != null) valueDisplay = "${record.weight} kg";
+      else if (record.headCircumference != null) valueDisplay = "${record.headCircumference} cm";
+    } else if (record.scaleType == ScaleType.bristol) {
+      valueDisplay = "${record.score?.toInt() ?? 0} 型";
+    } else if (record.scaleType == ScaleType.haq) {
+      valueDisplay = "${record.score?.toStringAsFixed(1) ?? 0} 分";
     } else {
-      scaleTitle = record.scaleType.name.toUpperCase(); // 例如：poem -> POEM
+      valueDisplay = "${record.score ?? 0} 分";
     }
+
+    // 🚀 3. 處理狀態標籤 (如果是兒科，顯示模式名稱而不是嚴重度)
+    String statusLabel = record.severityLabel;
+    if (record.scaleType == ScaleType.growth) {
+      if (record.height != null) statusLabel = "身高紀錄";
+      else if (record.weight != null) statusLabel = "體重紀錄";
+      else statusLabel = "頭圍紀錄";
+    }
+
     final Color statusColor = record.severityColor;
-    final String statusLabel = record.severityLabel;
     final IconData iconData = _getScaleIcon(record.scaleType);
     final DateTime displayDate = record.targetDate ?? record.date ?? DateTime.now();
     final String targetDateStr = _getHumanizedDate(displayDate);
@@ -169,11 +187,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       },
       child: Card(
         margin: const EdgeInsets.only(top: 12),
-        clipBehavior: Clip.antiAlias, // 🚀 確保色條不會超出圓角
+        clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 2,
         child: Container(
-          // 🚀 保持 Border 設計，捨棄 IntrinsicHeight 以防止 Overflow
           decoration: BoxDecoration(
             border: Border(left: BorderSide(color: statusColor, width: 6)),
           ),
@@ -190,9 +207,8 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
               targetDateStr,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-            // 🚀 這裡就會顯示「POEM：輕微 (5分)」
             subtitle: Text(
-              "$scaleTitle：$statusLabel (${record.score ?? 0}分)",
+              "$scaleTitle：$statusLabel ($valueDisplay)", // 🚀 自動切換 cm/kg/型/分
               style: TextStyle(
                   fontSize: 13,
                   color: statusColor.withOpacity(0.8),
@@ -209,7 +225,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                   children: [
                     const Divider(height: 1),
                     const SizedBox(height: 12),
-                    _buildScoreDetails(record),
+                    _buildScoreDetails(record), // 🚀 記得裡面也要過濾兒科建議
                     if (record.imagePath != null && File(record.imagePath!).existsSync())
                       _buildPhotoWithConsent(record),
                     const SizedBox(height: 16),
@@ -234,14 +250,46 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         return [ScaleType.phq9, ScaleType.gad7].contains(type);
       case AppCategory.pain:
         return type == ScaleType.vas;
+      case AppCategory.rheumatology:
+      // 🚀 風濕免疫科通常看 HAQ 功能評估或 VAS 疼痛
+        return [ScaleType.haq, ScaleType.vas].contains(type);
+      case AppCategory.gastro:
+      // 🚀 腸胃科看布里斯托便便分類或 IBS 嚴重度
+        return [ScaleType.bristol, ScaleType.ibs_sss].contains(type);
+      case AppCategory.womens:
+      // 🚀 女性健康看生理週期
+        return type == ScaleType.cycle;
+      case AppCategory.peds:
+      // 🚀 兒科看生長曲線
+        return type == ScaleType.growth;
+      default:
+      // 🚀 如果找不到對應科別，預設不屬於該分類
+        return false;
     }
   }
 
   String _getCategoryName(AppCategory cat) {
     switch (cat) {
-      case AppCategory.dermatology: return "肌膚照護"; // 🚀 修改
-      case AppCategory.psychiatry: return "情緒照護";  // 🚀 修改
+      case AppCategory.dermatology: return "肌膚照護";
+      case AppCategory.psychiatry: return "情緒照護";
       case AppCategory.pain: return "疼痛管理";
+      case AppCategory.rheumatology: return "風濕免疫";
+      case AppCategory.gastro: return "腸胃紀錄";
+      case AppCategory.womens: return "女性健康";
+      case AppCategory.peds: return "兒科發展";
+      default: return "健康追蹤";
+    }
+  }
+
+  // 增加一個輔助方法
+  String _getShortScaleName(ScaleType type) {
+    switch (type) {
+      case ScaleType.growth: return "生長紀錄";
+      case ScaleType.bristol: return "便便分類";
+      case ScaleType.cycle: return "生理週期";
+      case ScaleType.haq: return "功能評估";
+      case ScaleType.ibs_sss: return "腸胃嚴重度";
+      default: return type.name.toUpperCase();
     }
   }
 
@@ -253,6 +301,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       case ScaleType.phq9:
       case ScaleType.gad7: return Icons.psychology_rounded;
       case ScaleType.vas: return Icons.bolt_rounded;
+      case ScaleType.haq: return Icons.accessibility_new_rounded; // 🚀 風濕
+      case ScaleType.bristol: return Icons.water_drop_rounded;    // 🚀 腸胃
+      case ScaleType.cycle: return Icons.calendar_month_rounded; // 🚀 女性
+      case ScaleType.growth: return Icons.child_care_rounded;    // 🚀 兒科
       default: return Icons.assignment_rounded;
     }
   }
@@ -265,9 +317,18 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   }
 
   Widget _buildScoreDetails(PoemRecord record) {
+    String advice;
+    if (record.scaleType == ScaleType.growth) {
+      advice = "生長數據已存檔。建議定期測量並對照 WHO 生長曲線標準。";
+    } else if (record.scaleType == ScaleType.bristol) {
+      advice = "便便型態紀錄完成。若長期出現異常型態，建議調整飲食並諮詢醫師。";
+    } else {
+      advice = "目前評估為「${record.severityLabel}」。建議持續紀錄，回診時提供給醫師參考。";
+    }
+
     return Text(
-        "臨床建議：${record.severityLabel}。請持續觀察紀錄，並於回診時主動提供醫師參考。",
-        style: const TextStyle(fontSize: 16, color: Colors.blueGrey, fontWeight: FontWeight.w500)
+        advice,
+        style: const TextStyle(fontSize: 15, color: Colors.blueGrey, fontWeight: FontWeight.w500)
     );
   }
 
@@ -311,6 +372,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
   // 🚀 修正：現在會回傳對話框結果給 Dismissible
   Future<bool?> _confirmDelete(BuildContext context, PoemRecord record) async {
+    HapticFeedback.heavyImpact(); // 🚀 觸發強力震動，警示這是危險操作
     return await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -329,35 +391,65 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   }
 
   Widget _buildActionButtons(PoemRecord record) {
-    return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-      TextButton.icon(
-        onPressed: () async {
-          final result = await Navigator.push(context, MaterialPageRoute(
-            builder: (context) => PoemSurveyScreen(initialType: record.scaleType, oldRecord: record),
-          ));
-          if (result == true) _refresh();
-        },
-        icon: const Icon(Icons.edit_outlined, color: Colors.blue),
-        label: const Text("修改", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-      ),
-      const SizedBox(width: 8),
-      TextButton.icon(
-        onPressed: () => ExportService.generateClinicalReport([record], null, record.scaleType),
-        icon: const Icon(Icons.picture_as_pdf),
-        label: const Text("PDF", style: TextStyle(fontWeight: FontWeight.bold)),
-      ),
-      TextButton.icon(
-        onPressed: () async {
-          final confirm = await _confirmDelete(context, record);
-          if (confirm == true) {
-            await isarService.deleteRecord(record.id);
-            _refresh();
-          }
-        },
-        icon: const Icon(Icons.delete_outline, color: Colors.red),
-        label: const Text("刪除", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-      ),
-    ]);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        // 1. 修改按鈕：保持原樣，確保能回傳刷新
+        TextButton.icon(
+          onPressed: () async {
+            final result = await Navigator.push(context, MaterialPageRoute(
+              builder: (context) => PoemSurveyScreen(initialType: record.scaleType, oldRecord: record),
+            ));
+            if (result == true) _refresh();
+          },
+          icon: const Icon(Icons.edit_outlined, size: 20),
+          label: const Text("修改", style: TextStyle(fontWeight: FontWeight.bold)),
+          style: TextButton.styleFrom(foregroundColor: Colors.blue),
+        ),
+
+        const SizedBox(width: 4),
+
+        // 2. PDF 按鈕：關鍵修正！加入自動維度判定
+        TextButton.icon(
+          onPressed: () {
+            // 🚀 自動判定兒科模式：根據紀錄中有值的欄位來決定
+            String? detectedMode;
+            if (record.scaleType == ScaleType.growth) {
+              if (record.height != null) detectedMode = 'height';
+              else if (record.weight != null) detectedMode = 'weight';
+              else if (record.headCircumference != null) detectedMode = 'head';
+            }
+
+            // 呼叫 Service，傳入判定後的模式
+            ExportService.generateClinicalReport(
+              [record],
+              null,
+              record.scaleType,
+              growthMode: detectedMode, // 🚀 讓 PDF 知道該印 cm 還是 kg
+            );
+          },
+          icon: const Icon(Icons.picture_as_pdf, size: 20),
+          label: const Text("PDF", style: TextStyle(fontWeight: FontWeight.bold)),
+          style: TextButton.styleFrom(foregroundColor: Colors.teal.shade700),
+        ),
+
+        const SizedBox(width: 4),
+
+        // 3. 刪除按鈕：保持確認邏輯，外觀微調
+        TextButton.icon(
+          onPressed: () async {
+            final confirm = await _confirmDelete(context, record);
+            if (confirm == true) {
+              await isarService.deleteRecord(record.id);
+              _refresh();
+            }
+          },
+          icon: const Icon(Icons.delete_outline, size: 20),
+          label: const Text("刪除", style: TextStyle(fontWeight: FontWeight.bold)),
+          style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+        ),
+      ],
+    );
   }
 
   Widget _buildEmptyState() {

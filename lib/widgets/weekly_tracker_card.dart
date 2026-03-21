@@ -9,6 +9,7 @@ import '../models/scale_config.dart';
 class WeeklyTrackerCard extends StatefulWidget {
   final ScaleType type;
   final List<PoemRecord> history;
+  final String unit; // 🚀 1. 新增這個
   final VoidCallback? onRefresh;
 
   // 🚀 1. 新增接收外部傳入的時間字串與點擊事件
@@ -19,6 +20,7 @@ class WeeklyTrackerCard extends StatefulWidget {
     super.key,
     required this.type,
     required this.history,
+    this.unit = "分", // 🚀 2. 預設值為分
     this.onRefresh,
     this.reminderText,   // 🚀 加入建構子
     this.onReminderTap,  // 🚀 加入建構子
@@ -42,6 +44,7 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     _scrollController.dispose();
     super.dispose();
   }
+
 
   void _scrollToCurrentWeek() {
     if (!_scrollController.hasClients) return;
@@ -166,19 +169,22 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
   }
 
   Widget _buildHeader(String title, Color color, bool isCompleted) {
+    // 🚀 抓取最新一筆紀錄 (history 已經在 home_screen 排序過了，第一筆就是最新)
+    final lastRecord = widget.history.isNotEmpty ? widget.history.first : null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 第一行：標題跑馬燈 + 提醒/狀態圖示
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 🚀 2. 關鍵修正：將 Text 換成跑馬燈
             Expanded(
               child: SizedBox(
-                height: 32, // 設定高度，確保跑馬燈能正常顯示
+                height: 32,
                 child: Marquee(
-                  key: ValueKey(widget.type), // 🚀 關鍵：卡片切換時，Key 跟著 type 變，觸發重跑
-                  text: "$title 紀錄進度", // 顯示「這週皮膚還好嗎？ 紀錄進度」
+                  key: ValueKey(widget.type),
+                  text: "$title 紀錄進度",
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 17,
@@ -186,10 +192,9 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                   ),
                   scrollAxis: Axis.horizontal,
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  blankSpace: 50.0,      // 文字循環間距
-                  velocity: 30.0,        // 跑動速度
-                  pauseAfterRound: const Duration(hours: 1), // 跑完一圈停 3 秒，讓使用者能看清楚
-                  startPadding: 0.0,
+                  blankSpace: 50.0,
+                  velocity: 30.0,
+                  pauseAfterRound: const Duration(hours: 1),
                   accelerationDuration: const Duration(seconds: 1),
                   accelerationCurve: Curves.linear,
                   decelerationDuration: const Duration(milliseconds: 500),
@@ -206,33 +211,91 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1), // 🚀 使用該量表的主色
+                    color: color.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: color.withOpacity(0.3), width: 1), // 🚀 同步顏色
+                    border: Border.all(color: color.withOpacity(0.3), width: 1),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.alarm_rounded, size: 14, color: color), // 🚀
+                      Icon(Icons.alarm_rounded, size: 14, color: color),
+                      const SizedBox(width: 4),
                       Text(
                         widget.reminderText!,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color), // 🚀
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color),
                       ),
                     ],
                   ),
                 ),
               )
             else
-              Icon(isCompleted ? Icons.check_circle : Icons.pending_actions, size: 20, color: isCompleted ? Colors.green : Colors.orange),
+              Icon(
+                  isCompleted ? Icons.check_circle : Icons.pending_actions,
+                  size: 20,
+                  color: isCompleted ? Colors.green : Colors.orange
+              ),
           ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          isCompleted ? "🎉 周任務已完成" : "🔔 周任務未完成",
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: isCompleted ? Colors.green : Colors.orange.shade800),
+
+        const SizedBox(height: 6),
+
+        // 🚀 關鍵修正第二行：左邊任務狀態 + 右邊最新數值膠囊
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              isCompleted ? "🎉 周任務已完成" : "🔔 周任務未完成",
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: isCompleted ? Colors.green : Colors.orange.shade800
+              ),
+            ),
+
+            // 🚀 只有在有歷史紀錄時才顯示「最新」數值
+            if (lastRecord != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "最新：${_formatLastValue(lastRecord)}", // 👈 呼叫下面定義的格式化方法
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: color
+                  ),
+                ),
+              ),
+          ],
         ),
       ],
     );
   }
+
+// 🚀 整合後的數值格式化工具
+  String _formatLastValue(PoemRecord record) {
+    // 1. 兒科模式
+    if (widget.type == ScaleType.growth) {
+      if (widget.unit == "kg") {
+        return "${record.weight?.toStringAsFixed(1) ?? '0'} kg";
+      } else {
+        // 優先顯示身高，沒身高顯頭圍
+        final double val = record.height ?? record.headCircumference ?? 0;
+        return "${val.toInt()} cm";
+      }
+    }
+
+    // 2. 風濕科 HAQ (通常有小數點)
+    if (widget.type == ScaleType.haq) {
+      return "${record.score?.toStringAsFixed(1) ?? '0'} ${widget.unit}";
+    }
+
+    // 3. 一般量表與腸胃科 (取整數)
+    return "${record.score?.toInt() ?? '0'} ${widget.unit}";
+  }
+
 
   String _getTimeString(PoemRecord record, DateTime weekStartDate) {
     final DateTime fillDate = record.date!;

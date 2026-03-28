@@ -150,10 +150,31 @@ class ExportService {
       // 🚀 2. 為計算邏輯建立一個統一的「虛擬分數」列表
 // 這樣下方的 _analyzeTrend 和 _calculateAlerts 才能無縫接軌
       for (var r in validRecords) {
+        // --- 1. 兒科數據分流 ---
         if (targetScale == ScaleType.growth) {
-          if (growthMode == 'weight') r.score = r.weight?.toInt();
-          else if (growthMode == 'head') r.score = r.headCircumference?.toInt();
-          else r.score = r.height?.toInt();
+          if (growthMode == 'weight') {
+            r.score = r.weight?.toInt();
+          } else if (growthMode == 'head') {
+            r.score = r.headCircumference?.toInt();
+          } else {
+            r.score = r.height?.toInt();
+          }
+        }
+
+        // --- 2. 慢性病：血壓紀錄分流 ---
+        else if (targetScale == ScaleType.bp_log) {
+          // 🚀 臨床建議：趨勢分析通常以「收縮壓 (Systolic)」為主要指標
+          // 如果你有定義 systolic 欄位，請將其轉給 score
+          r.score = r.systolic?.toInt();
+
+          // 💡 備註：如果收縮壓為空，可考慮抓舒張壓或保持 null
+          r.score ??= 0;
+        }
+
+        // --- 3. 其他標準量表 (PSQI, PHQ-9, POEM 等) ---
+        else {
+          // 這些量表原本就有 score，確保它不是 null 即可
+          r.score ??= 0;
         }
       }
 
@@ -405,9 +426,10 @@ class ExportService {
         // 🚀 修正：只有「非生長數據」才顯示急性發作次數
         if (type != ScaleType.growth)
           _trendRow(labels['rapid_event']!, "${alerts.rapidCount} ${isEn ? 'Events' : '次'} (Limit: ${c.rapidIncreaseThreshold})"),
+
         _trendRow(
           isEn ? "Clinical Threshold" : "臨床警戒值",
-            "≥ ${_getClinicalThreshold(type)} pts"
+            "≥ ${_getClinicalThreshold(type)} $unit"
         ),
         _trendRow(labels['rapid_event']!, "${alerts.rapidCount} ${isEn ? 'Events' : '次'} (Limit: ${c.rapidIncreaseThreshold})"),
 
@@ -423,6 +445,9 @@ class ExportService {
 
   static int _getClinicalThreshold(ScaleType t) {
     switch (t) {
+      case ScaleType.psqi: return 5;   // 🚀 睡眠障礙切點
+      case ScaleType.isi: return 15;  // 🚀 失眠臨床切點
+      case ScaleType.bp_log: return 140; // 🚀 以收縮壓 140 為警戒
       case ScaleType.phq9: return 10; // 🚀 中度憂鬱門檻
       case ScaleType.gad7: return 10; // 🚀 中度焦慮門檻
       case ScaleType.vas: return 7;   // 🚀 重度疼痛門檻
@@ -454,28 +479,107 @@ class ExportService {
     );
   }
 
-  static pw.Widget _buildHistoryTable(List<PoemRecord> chunk, Map<dynamic, Uint8List> photos, Map<String, String> labels, String dateFmt) {
+  static pw.Widget _buildHistoryTable(
+      List<PoemRecord> chunk,
+      Map<dynamic, Uint8List> photos,
+      Map<String, String> labels,
+      String dateFmt
+      ) {
     return pw.Table(
       border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
       columnWidths: {
-        0: const pw.FixedColumnWidth(90),
-        1: const pw.FixedColumnWidth(50),
-        2: const pw.FlexColumnWidth()
+        0: const pw.FixedColumnWidth(90),  // 日期
+        1: const pw.FixedColumnWidth(80),  // 數據值 (加寬一點點以容納 120/80)
+        2: const pw.FlexColumnWidth()      // 筆記與照片
       },
       children: [
-        pw.TableRow(decoration: const pw.BoxDecoration(color: PdfColors.grey200), children: [
-          _tableCell(labels['date']!, isBold: true),
-          _tableCell(labels['score']!, isBold: true),
-          _tableCell(labels['note']!, isBold: true),
-        ]),
-        ...chunk.map((r) => pw.TableRow(children: [
-          _tableCell(DateFormat(dateFmt).format(r.targetDate ?? r.date!)),
-          _tableCell(r.score?.toString() ?? "-", isBold: true),
-          pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            if (r.note != null && r.note!.isNotEmpty) pw.Text(r.note!, style: const pw.TextStyle(fontSize: 12)),
-            if (photos.containsKey(r.id)) pw.Padding(padding: const pw.EdgeInsets.only(top: 5), child: pw.Image(pw.MemoryImage(photos[r.id]!), height: 80)),
-          ])),
-        ])),
+        // 表頭
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+          children: [
+            _tableCell(labels['date']!, isBold: true),
+            _tableCell(labels['score']!, isBold: true), // 這裡會顯示 "數值" 或 "分數"
+            _tableCell(labels['note']!, isBold: true),
+          ],
+        ),
+
+        // --- 資料列處理 ---
+        ...chunk.map((r) {
+          String displayValue = "-";
+          final int score = r.score ?? 0;
+
+          // 1. 🩺 循環系統：血壓紀錄 (格式: 120/80 mmHg)
+          if (r.scaleType == ScaleType.bp_log) {
+            displayValue = "${r.systolic ?? '-'}/${r.diastolic ?? '-'}";
+            if (r.pulse != null) displayValue += "\n(${r.pulse} bpm)";
+          }
+
+          // 2. 👶 兒科：成長數據 (自動標註單位)
+          else if (r.scaleType == ScaleType.growth) {
+            if (r.height != null) displayValue = "${r.height} cm";
+            else if (r.weight != null) displayValue = "${r.weight} kg";
+            else if (r.headCircumference != null) displayValue = "${r.headCircumference} cm";
+          }
+
+          // 3. 🧠 心理健康：情緒級別判定 (PHQ-9 / GAD-7)
+          else if (r.scaleType == ScaleType.phq9 || r.scaleType == ScaleType.gad7) {
+            String level = "";
+            if (score >= 15) level = " (重度)";
+            else if (score >= 10) level = " (中度)";
+            else if (score >= 5) level = " (輕度)";
+            else level = " (正常)";
+            displayValue = "$score 分$level";
+          }
+
+          // 4. 🌙 睡眠健康：品質判定 (PSQI / ISI)
+          else if (r.scaleType == ScaleType.psqi) {
+            displayValue = "$score 分${score > 5 ? ' (差)' : ' (良)'}";
+          }
+          else if (r.scaleType == ScaleType.isi) {
+            String level = "";
+            if (score >= 22) level = " (極重失眠)";
+            else if (score >= 15) level = " (中度失眠)";
+            else if (score >= 8) level = " (輕微失眠)";
+            else level = " (正常)";
+            displayValue = "$score 分$level";
+          }
+
+          // 5. 💥 疼痛管理：強度標註 (VAS)
+          else if (r.scaleType == ScaleType.vas) {
+            String level = score >= 7 ? " (重度痛)" : (score >= 4 ? " (中度痛)" : " (輕微)");
+            displayValue = "$score 分$level";
+          }
+
+          // 6. 💩 腸胃科：布里斯托型態
+          else if (r.scaleType == ScaleType.bristol) {
+            displayValue = "第 $score 型";
+          }
+
+          // 7. 預設顯示
+          else {
+            displayValue = "$score 分";
+          }
+
+          return pw.TableRow(children: [
+            _tableCell(DateFormat(dateFmt).format(r.targetDate ?? r.date!)),
+            _tableCell(displayValue, isBold: true),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(5),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  if (r.note != null && r.note!.isNotEmpty)
+                    pw.Text(r.note!, style: const pw.TextStyle(fontSize: 10)),
+                  if (photos.containsKey(r.id))
+                    pw.Padding(
+                        padding: const pw.EdgeInsets.only(top: 5),
+                        child: pw.Image(pw.MemoryImage(photos[r.id]!), height: 80)
+                    ),
+                ],
+              ),
+            ),
+          ]);
+        }),
       ],
     );
   }
@@ -540,6 +644,34 @@ class ExportService {
     }
 
     switch (t) {
+// 🚀 新增：睡眠健康
+      case ScaleType.psqi:
+        return {
+          'title': 'PSQI',
+          'full_name': isEn ? 'PSQI: Pittsburgh Sleep Quality Index' : 'PSQI 匹茲堡睡眠品質指數',
+          'disclaimer': isEn ? 'Global score > 5 indicates poor sleep quality.' : '總分 > 5 分代表睡眠品質欠佳，分數越高代表障礙程度越嚴重。'
+        };
+      case ScaleType.isi:
+        return {
+          'title': 'ISI',
+          'full_name': isEn ? 'ISI: Insomnia Severity Index' : 'ISI 失眠嚴重度量表',
+          'disclaimer': isEn ? 'Score ≥ 15 indicates clinical insomnia.' : '總分 ≥ 15 分代表已達臨床顯著失眠，建議尋求專科治療。'
+        };
+
+    // 🚀 新增：慢性病與疼痛
+      case ScaleType.bp_log:
+        return {
+          'title': 'Blood Pressure',
+          'full_name': isEn ? 'Heart Rate & Blood Pressure Log' : '血壓與心率監測紀錄',
+          'disclaimer': isEn ? 'Target BP is usually < 130/80 mmHg.' : '血壓控制目標通常建議在 130/80 mmHg 以下，異常波動請速就醫。'
+        };
+      case ScaleType.cat:
+        return {
+          'title': 'CAT',
+          'full_name': isEn ? 'CAT: COPD Assessment Test' : 'CAT 慢性阻塞性肺病評估',
+          'disclaimer': isEn ? 'High scores indicate severe symptom impact.' : '分數越高代表呼吸道症狀對生活影響越嚴重。'
+        };
+
       case ScaleType.phq9:
         return {
           'title': 'PHQ-9',
@@ -572,9 +704,8 @@ class ExportService {
 
   // 🚀 增加一個單位 Helper
   static String _getUnit(ScaleType type, String? growthMode) {
-    if (type == ScaleType.growth) {
-      return growthMode == 'weight' ? "kg" : "cm";
-    }
+    if (type == ScaleType.growth) return growthMode == 'weight' ? "kg" : "cm";
+    if (type == ScaleType.bp_log) return "mmHg"; // 🚀 補上血壓單位
     if (type == ScaleType.bristol) return "型";
     return "pts";
   }

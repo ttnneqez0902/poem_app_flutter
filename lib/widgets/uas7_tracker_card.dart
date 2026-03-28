@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
-import 'package:marquee/marquee.dart'; // 🚀 1. 確保引入這個
 import '../models/poem_record.dart';
 import '../screens/poem_survey_screen.dart';
-import '../models/scale_config.dart'; // 🚀 2. 引入配置檔拿顏色與標題
+import '../models/scale_config.dart';
 
 class Uas7TrackerCard extends StatefulWidget {
   final DateTime startDate;
@@ -37,8 +36,6 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday());
   }
 
-  // --- 省略中間的 _scrollToToday, _getRecordAtDate 等方法 (保持不變) ---
-
   @override
   void dispose() {
     _scrollController.dispose();
@@ -53,9 +50,8 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
 
     if (index >= 0 && index < widget.completionStatus.length) {
       double itemWidth = 64.0;
-      double offset = (index * itemWidth);
       double screenWidth = MediaQuery.of(context).size.width;
-      double centerOffset = offset - (screenWidth / 2) + (itemWidth / 2) + 20;
+      double centerOffset = (index * itemWidth) - (screenWidth / 2) + (itemWidth / 2) + 20;
 
       _scrollController.animateTo(
         centerOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
@@ -77,33 +73,30 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   @override
   Widget build(BuildContext context) {
     final bool isTodayDone = _checkIfTodayDone();
-
-    // 🚀 3. 改為動態抓取顏色與標題
     final Color themeColor = ScaleConfig.allScales[ScaleType.uas7]?.color ?? Colors.teal;
-    final String displayTitle = ScaleConfig.allScales[ScaleType.uas7]?.title ?? "小紅點紀錄";
+    final String displayTitle = "UAS7"; // 🚀 直接用大寫縮寫
 
     final DateTime nextDate = DateTime.now().add(const Duration(days: 1));
     final String nextExpectedDate = DateFormat('MM/dd').format(nextDate);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       elevation: 4,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildHeader(isTodayDone, nextExpectedDate, displayTitle, themeColor), // 🚀 傳入動態內容
-            const SizedBox(height: 12),
+            _buildHeader(isTodayDone, nextExpectedDate, displayTitle, themeColor),
+            const SizedBox(height: 16),
 
             SingleChildScrollView(
               controller: _scrollController,
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: List.generate(widget.completionStatus.length, (index) {
                   final date = widget.startDate.add(Duration(days: index));
                   final bool isDone = widget.completionStatus[index];
@@ -112,35 +105,28 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
                   final bool isPastUnfinished = !isDone && !isToday && date.isBefore(DateTime.now());
 
                   return Padding(
-                    padding: const EdgeInsets.only(right: 12),
+                    padding: const EdgeInsets.only(right: 14),
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          height: 24,
-                          child: Text(
-                            "${DateFormat('M').format(date)}月",
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: (isDone || isToday) ? themeColor : Colors.blueGrey.shade200
-                            ),
+                        Text(
+                          "${DateFormat('M').format(date)}月",
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: (isDone || isToday) ? themeColor : Colors.blueGrey.shade200
                           ),
                         ),
                         const SizedBox(height: 8),
                         _buildDateSquare(date, isDone, isToday, isPastUnfinished, themeColor, record),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 40,
+                          height: 35,
                           child: Text(
-                            isDone ? _getTimeString(date) : (isToday ? "今日" : (isPastUnfinished ? "補填" : "預計")),
+                            isDone ? _getTimeString(date) : (isToday ? "今日" : (isPastUnfinished ? "待補" : "預計")),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 10,
-                                height: 1.1,
-                                color: isDone && !_isSameDay(_getRecordAtDate(date)?.date ?? date, date)
-                                    ? Colors.orange.shade700
-                                    : (isToday ? themeColor : Colors.grey.shade600),
+                                color: isDone ? themeColor : Colors.grey.shade600,
                                 fontWeight: (isDone || isToday) ? FontWeight.bold : FontWeight.normal
                             ),
                           ),
@@ -158,76 +144,97 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   }
 
   Widget _buildHeader(bool isTodayDone, String nextExpectedDate, String title, Color color) {
+    // 🚀 抓取最新紀錄顯示數值
+    final lastRecord = widget.history.isNotEmpty ? widget.history.first : null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 🚀 4. 標題也改用跑馬燈，防止之後標題變長導致 Overflow
+            // 🚀 1. 標題：靜態大寫標題
             Expanded(
-              child: SizedBox(
-                height: 32,
-                child: Marquee(
-                  key: ValueKey(title), // 🚀 內容變化時觸發重跑
-                  text: title,
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 17,
-                      color: color.withOpacity(0.8)
-                  ),
-                  blankSpace: 50.0,
-                  velocity: 30.0,
-                  pauseAfterRound: const Duration(hours: 1),
+              child: Text(
+                "$title 紀錄進度",
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 19,
+                  color: color.withOpacity(0.9),
                 ),
               ),
             ),
             const SizedBox(width: 8),
 
-            // 🚀 5. 提醒按鈕顏色改為與主題連動
+            // 🚀 2. 提醒或狀態圖示
             if (widget.reminderText != null && widget.onReminderTap != null)
-              InkWell(
-                onTap: widget.onReminderTap,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.1), // 🎨 使用主題色背景
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: color.withOpacity(0.3), width: 1),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.alarm_rounded, size: 14, color: color), // 🎨 使用主題色 Icon
-                      const SizedBox(width: 4),
-                      Text(
-                        widget.reminderText!,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color), // 🎨
-                      ),
-                    ],
-                  ),
-                ),
-              )
+              _buildReminderChip(color)
             else
-              Icon(isTodayDone ? Icons.check_circle_rounded : Icons.pending_actions_rounded, color: isTodayDone ? Colors.green : Colors.orange, size: 24),
+              Icon(
+                  isTodayDone ? Icons.check_circle : Icons.pending_actions,
+                  size: 22,
+                  color: isTodayDone ? Colors.green : Colors.orange
+              ),
           ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          isTodayDone ? "🎉 日任務已完成 (下次預計: $nextExpectedDate)" : "🔔 日任務未完成",
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: isTodayDone ? Colors.green : Colors.orange.shade800),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              isTodayDone ? "🎉 今日任務已完成" : "🔔 今日任務未完成",
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: isTodayDone ? Colors.green : Colors.orange.shade800
+              ),
+            ),
+            // 🚀 3. 最新分數膠囊 (UAS7 專用)
+            if (lastRecord != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "最新：${lastRecord.score ?? 0} 分",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: color),
+                ),
+              ),
+          ],
         ),
       ],
     );
   }
 
-  // --- 省略其餘輔助方法 (_buildDateSquare, _getTimeString, _checkIfTodayDone, _isSameDay) ---
-  // ... 請保持你原本 code 結尾那幾段不變
+  Widget _buildReminderChip(Color color) {
+    return InkWell(
+      onTap: widget.onReminderTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3), width: 1),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.alarm_rounded, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(widget.reminderText!, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDateSquare(DateTime date, bool isDone, bool isToday, bool isPastUnfinished, Color themeColor, PoemRecord? record) {
     return InkWell(
       onTap: () async {
         if (isToday || isPastUnfinished || isDone) {
-          final result = await Navigator.push<bool>(
+          bool? result = await Navigator.push<bool>(
             context,
             MaterialPageRoute(builder: (context) => PoemSurveyScreen(
               initialType: ScaleType.uas7,
@@ -235,33 +242,25 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
               targetDate: isDone ? null : date,
             )),
           );
-
-          if (result == true && mounted) {
-            if (widget.onRefresh != null) {
-              widget.onRefresh!();
-            }
-            setState(() {});
-          }
+          if (result == true) widget.onRefresh?.call();
         }
       },
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
         width: 52, height: 52,
         decoration: BoxDecoration(
-          color: isToday ? Colors.white : (isDone ? themeColor.withOpacity(0.05) : (isPastUnfinished ? Colors.orange.withOpacity(0.05) : Colors.grey.shade50)),
-          borderRadius: BorderRadius.circular(10),
+          color: isToday ? Colors.white : (isDone ? themeColor.withOpacity(0.05) : Colors.grey.shade50),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isToday ? themeColor : (isDone ? themeColor : (isPastUnfinished ? Colors.orange.shade300 : Colors.grey.shade300)),
             width: 2.5,
           ),
-          boxShadow: isToday ? [BoxShadow(color: themeColor.withOpacity(0.2), blurRadius: 4)] : null,
         ),
         child: Stack(
           alignment: Alignment.center,
           children: [
             Text(DateFormat('dd').format(date), style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: (isDone || isToday) ? themeColor : (isPastUnfinished ? Colors.orange.shade800 : Colors.grey.shade700))),
             if (isDone) Positioned(right: 2, top: 2, child: Icon(Icons.check_circle, color: themeColor, size: 16)),
-            if (isPastUnfinished) Positioned(right: 2, top: 2, child: Icon(Icons.add_circle_outline, color: Colors.orange.shade300, size: 14)),
           ],
         ),
       ),
@@ -270,21 +269,10 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
 
   String _getTimeString(DateTime targetDate) {
     try {
-      final record = widget.history.firstWhere(
-              (r) => _isSameDay(r.targetDate ?? r.date!, targetDate)
-      );
-
+      final record = widget.history.firstWhere((r) => _isSameDay(r.targetDate ?? r.date!, targetDate));
       final DateTime fillDate = record.date!;
-      final bool isLateFill = !_isSameDay(fillDate, targetDate);
-
-      if (isLateFill) {
-        return "補 ${DateFormat('M/d').format(fillDate)}\n${DateFormat('HH:mm').format(fillDate)}";
-      } else {
-        return DateFormat('HH:mm').format(fillDate);
-      }
-    } catch (_) {
-      return "已完成";
-    }
+      return _isSameDay(fillDate, targetDate) ? DateFormat('HH:mm').format(fillDate) : "補 ${DateFormat('M/d').format(fillDate)}";
+    } catch (_) { return "已完成"; }
   }
 
   bool _checkIfTodayDone() {

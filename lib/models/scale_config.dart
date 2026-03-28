@@ -2,7 +2,7 @@ import 'package:flutter/material.dart'; // 🚀 必須引入，才能使用 Colo
 import 'poem_record.dart';
 
 // 🚀 1. 擴充科別分類
-enum AppCategory { dermatology, psychiatry, pain, rheumatology, gastro, womens, peds }
+enum AppCategory { dermatology, sleep, chronic, psychiatry, pain, rheumatology, gastro, womens, peds }
 
 class ScaleQuestion {
   final String label;
@@ -12,10 +12,11 @@ class ScaleQuestion {
 
 class ScaleConfig {
   final String title;
+  final String? unit; // 🚀 新增：單位 (如 cm, kg, 型, 分)
   final List<ScaleQuestion> questions;
   final int maxScore;
   final String description;
-  final Color color; // 🚀 補上這行，解決卡片顏色報錯;
+  final Color color; // 🚀 補上這行，解決卡片顏色報錯
   final AppCategory category; // 🚀 補上科別，方便分頁顯示
 
   ScaleConfig({
@@ -25,6 +26,7 @@ class ScaleConfig {
     required this.description,
     required this.color, // 🚀 構造函數也要加
     required this.category,
+    this.unit, // 🚀 2. 關鍵修正：構造函數一定要加上這一行！
   });
 
   static Map<ScaleType, ScaleConfig> allScales = {
@@ -94,6 +96,124 @@ class ScaleConfig {
         ScaleQuestion("8. 睡眠影響 (VAS 0-10)"),
       ],
     ),
+
+// ==========================================
+// 🌙 睡眠健康 (Sleep Health)
+// ==========================================
+
+    ScaleType.psqi: ScaleConfig(
+      title: "專業睡眠品質 (PSQI)",
+      category: AppCategory.sleep,
+      color: Colors.indigo.shade800,
+      maxScore: 3,
+      description: "評估過去一個月的睡眠品質與障礙",
+      questions: [
+        ScaleQuestion("1. 躺下到入睡需要的時間", options: ["15分鐘內", "16-30分鐘", "31-60分鐘", "超過60分鐘"]),
+        ScaleQuestion("2. 半夜醒來或早醒的頻率", options: ["從未", "每週不到1次", "每週1-2次", "每週3次以上"]),
+        ScaleQuestion("3. 起床去洗手間的頻率", options: ["從未", "每週不到1次", "每週1-2次", "每週3次以上"]),
+        ScaleQuestion("4. 呼吸不順或咳嗽感", options: ["從未", "每週不到1次", "每週1-2次", "每週3次以上"]),
+        ScaleQuestion("5. 感到太冷或太熱", options: ["從未", "每週不到1次", "每週1-2次", "每週3次以上"]),
+        ScaleQuestion("6. 需服用藥物才能入睡", options: ["從未", "每週不到1次", "每週1-2次", "每週3次以上"]),
+        ScaleQuestion("7. 白天工作時難以保持清醒", options: ["從未", "每週不到1次", "每週1-2次", "每週3次以上"]),
+        ScaleQuestion("8. 整體自評睡眠品質", options: ["非常好", "好", "不好", "非常差"]),
+      ],
+    ),
+
+    ScaleType.isi: ScaleConfig(
+      title: "失眠嚴重度 (ISI)",
+      category: AppCategory.sleep,
+      color: Colors.deepPurple,
+      maxScore: 4,
+      description: "評估最近兩週對失眠症狀的感受",
+      questions: [
+        ScaleQuestion("入睡困難程度", options: ["無", "輕微", "中度", "嚴重", "極其嚴重"]),
+        ScaleQuestion("維持睡眠困難（半夜醒來）", options: ["無", "輕微", "中度", "嚴重", "極其嚴重"]),
+        ScaleQuestion("太早醒來的問題", options: ["無", "輕微", "中度", "嚴重", "極其嚴重"]),
+        ScaleQuestion("對目前睡眠模式的滿意度", options: ["非常滿意", "滿意", "普通", "不滿意", "非常不滿意"]),
+        ScaleQuestion("睡眠問題對日常功能的干擾", options: ["無干擾", "輕微", "中度", "嚴重", "極其嚴重"]),
+      ],
+    ),
+
+    ScaleType.ess: ScaleConfig(
+      title: "白天嗜睡檢查 (ESS)",
+      category: AppCategory.sleep,
+      color: Colors.blueGrey,
+      maxScore: 3,
+      description: "在以下情況中，您打瞌睡的機會有多大？",
+      questions: [
+        ScaleQuestion("坐著閱讀時", options: ["從不", "很少", "中等", "極大機會"]),
+        ScaleQuestion("坐著看電視時", options: ["從不", "很少", "中等", "極大機會"]),
+        ScaleQuestion("在公共場所坐著不動時", options: ["從不", "很少", "中等", "極大機會"]),
+        ScaleQuestion("坐車連續一小時（非駕駛）", options: ["從不", "很少", "中等", "極大機會"]),
+        ScaleQuestion("下午坐著靜靜休息時", options: ["從不", "很少", "中等", "極大機會"]),
+        ScaleQuestion("飯後坐著（未飲酒）", options: ["從不", "很少", "中等", "極大機會"]),
+      ],
+    ),
+
+// ==========================================
+// 🩺 慢性病管理 (Chronic Disease)
+// ==========================================
+
+    ScaleType.bp_log: ScaleConfig(
+      title: "血壓紀錄",
+      unit: "mmHg",
+      category: AppCategory.chronic,
+      color: Colors.red.shade700,
+      maxScore: 0,
+      description: "請輸入早晚測量的血壓數值",
+      questions: [
+        ScaleQuestion("收縮壓 (Systolic)"),
+        ScaleQuestion("舒張壓 (Diastolic)"),
+        ScaleQuestion("心率 (Pulse)"),
+      ],
+    ),
+
+    ScaleType.cat: ScaleConfig(
+      title: "慢性呼吸道評估 (CAT)",
+      category: AppCategory.chronic,
+      color: Colors.cyan.shade800,
+      maxScore: 5,
+      description: "評估 COPD (慢性阻塞性肺病) 對生活的影響",
+      questions: [
+        ScaleQuestion("我從不咳嗽 <-> 我一直咳嗽", options: ["0", "1", "2", "3", "4", "5"]),
+        ScaleQuestion("胸腔完全沒有痰 <-> 痰非常多", options: ["0", "1", "2", "3", "4", "5"]),
+        ScaleQuestion("完全沒有胸悶感 <-> 胸悶非常嚴重", options: ["0", "1", "2", "3", "4", "5"]),
+        ScaleQuestion("爬坡或一層樓不喘 <-> 感到非常喘", options: ["0", "1", "2", "3", "4", "5"]),
+        ScaleQuestion("居家活動不受限 <-> 受限非常嚴重", options: ["0", "1", "2", "3", "4", "5"]),
+        ScaleQuestion("我睡得很安穩 <-> 睡眠受呼吸影響", options: ["0", "1", "2", "3", "4", "5"]),
+      ],
+    ),
+
+    ScaleType.dds: ScaleConfig(
+      title: "糖尿病壓力評估 (DDS)",
+      category: AppCategory.chronic,
+      color: Colors.orange.shade900,
+      maxScore: 6,
+      description: "評估過去一個月糖尿病帶來的心理負擔",
+      questions: [
+        ScaleQuestion("感到糖尿病佔據了太多生活精力", options: ["沒問題", "極輕微", "輕微", "中度", "中重度", "嚴重"]),
+        ScaleQuestion("擔心自己未能遵守飲食要求", options: ["沒問題", "極輕微", "輕微", "中度", "中重度", "嚴重"]),
+        ScaleQuestion("覺得醫師不夠了解我的病情", options: ["沒問題", "極輕微", "輕微", "中度", "中重度", "嚴重"]),
+        ScaleQuestion("對長期併發症感到恐懼", options: ["沒問題", "極輕微", "輕微", "中度", "中重度", "嚴重"]),
+      ],
+    ),
+
+    ScaleType.bpi: ScaleConfig(
+      title: "簡明疼痛量表 (BPI)",
+      category: AppCategory.chronic, // 也可歸類在 pain
+      color: Colors.redAccent.shade400,
+      maxScore: 10,
+      description: "評估疼痛強度及其對生活的干擾",
+      questions: [
+        ScaleQuestion("過去24小時最痛的程度 (0-10)"),
+        ScaleQuestion("過去24小時平均疼痛程度 (0-10)"),
+        ScaleQuestion("疼痛對日常工作的干擾 (0-10)"),
+        ScaleQuestion("疼痛對睡眠的干擾 (0-10)"),
+        ScaleQuestion("疼痛對情緒的干擾 (0-10)"),
+      ],
+    ),
+
+
 
     // ==========================================
     // 🧠 情緒照護 (Psychiatry)
@@ -173,6 +293,7 @@ class ScaleConfig {
       category: AppCategory.gastro,
       color: Colors.orange.shade800,
       maxScore: 7,
+      unit: "型", // 🚀 加上單位
       description: "請根據形狀選擇最接近的一種",
       questions: [
         ScaleQuestion("今日便便形狀", options: ["第一型: 硬球狀", "第二型: 香腸狀但表面凹凸", "第三型: 香腸狀但表面有裂痕", "第四型: 表面平滑軟條狀", "第五型: 柔軟塊狀", "第六型: 糊狀", "第七型: 水狀"]),
@@ -212,6 +333,7 @@ class ScaleConfig {
     // ==========================================
     ScaleType.growth: ScaleConfig(
       title: "寶寶成長紀錄",
+      unit: "數據", // 或者根據題目動態處理
       category: AppCategory.peds,
       color: Colors.lightBlue,
       maxScore: 0,

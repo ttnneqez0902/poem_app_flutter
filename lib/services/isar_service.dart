@@ -1,6 +1,7 @@
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart'; // 🚀 加上這行，才能使用 debugPrint
 import '../models/poem_record.dart';
 
 class IsarService {
@@ -63,14 +64,30 @@ class IsarService {
 
   Future<void> saveRecord(PoemRecord record) async {
     final uid = currentUid;
-    if (uid == null) throw Exception("Unauthorized");
-    record.userId = uid;
-    record.ensureId();
-    record.updatedAt = DateTime.now();
-    record.syncStatus = SyncStatus.pending;
-    record.isSynced = false;
+    if (uid == null) {
+      debugPrint("❌ [IsarService] 存檔失敗：UID 為空");
+      throw Exception("Unauthorized");
+    }
 
-    await isar.writeTxn(() async => await isar.poemRecords.put(record));
+    record
+      ..userId = uid
+      ..ensureId()
+      ..updatedAt = DateTime.now()
+      ..syncStatus = SyncStatus.pending
+      ..isSynced = false
+      ..isDeleted = record.isDeleted ?? false;
+
+    debugPrint("💾 [IsarService] 準備寫入：類型=${record.scaleType}, 日期=${record.targetDate}, 身高=${record.height}");
+
+    // 🚀 修正：只保留這一個寫入區塊即可
+    await isar.writeTxn(() async {
+      final generatedId = await isar.poemRecords.put(record);
+      debugPrint("✅ [IsarService] 寫入完成！原生 ID 為: $generatedId");
+    });
+
+    // 🚀 診斷 Log 移到寫入後
+    debugPrint("🚨 [存檔最後確認] 類型名字: ${record.scaleType.name}, 索引值: ${record.scaleType.index}");
+
   }
 
   // 🚀 補回：更新照片授權 (HistoryScreen 用)

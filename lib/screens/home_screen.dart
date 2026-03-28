@@ -112,6 +112,22 @@ class _HomeScreenState extends State<HomeScreen> {
       {'type': ScaleType.uas7, 'title': 'UAS7', 'sub': '今日小紅點紀錄', 'color': Colors.teal, 'icon': Icons.flare_rounded},
       {'type': ScaleType.scorad, 'title': 'SCORAD', 'sub': '全身狀況掃描', 'color': Colors.purple, 'icon': Icons.person_search_rounded},
     ],
+
+// 🚀 新增：睡眠健康 (必做核心)
+    AppCategory.sleep: [
+      {'type': ScaleType.psqi, 'title': 'PSQI', 'sub': '專業睡眠品質指數', 'color': Colors.indigo, 'icon': Icons.bedtime_rounded},
+      {'type': ScaleType.isi, 'title': 'ISI', 'sub': '失眠嚴重程度評估', 'color': Colors.deepPurple, 'icon': Icons.nights_stay_rounded},
+      {'type': ScaleType.ess, 'title': 'Epworth', 'sub': '白天嗜睡程度檢查', 'color': Colors.blueGrey, 'icon': Icons.wb_twilight_rounded},
+    ],
+
+    // 🚀 補上 BPI，讓慢性病管理的網格與趨勢圖同步
+    AppCategory.chronic: [
+      {'type': ScaleType.bp_log, 'title': '血壓紀錄', 'sub': '心血管規律追蹤', 'color': Colors.red, 'icon': Icons.monitor_heart_rounded},
+      {'type': ScaleType.cat, 'title': 'CAT', 'sub': '慢性呼吸道評估', 'color': Colors.cyan, 'icon': Icons.air_rounded},
+      {'type': ScaleType.dds, 'title': 'DDS', 'sub': '糖尿病心理壓力', 'color': Colors.orange, 'icon': Icons.psychology_alt_rounded},
+      {'type': ScaleType.bpi, 'title': 'BPI', 'sub': '簡明疼痛量表', 'color': Colors.redAccent.shade400, 'icon': Icons.personal_injury_rounded}, // 👈 補上這行
+    ],
+
     AppCategory.psychiatry: [
       {'type': ScaleType.phq9, 'title': 'PHQ-9', 'sub': '心情起伏觀察', 'color': Colors.indigo, 'icon': Icons.face_retouching_natural_rounded},
       {'type': ScaleType.gad7, 'title': 'GAD-7', 'sub': '讓身體放輕鬆', 'color': Colors.green.shade700, 'icon': Icons.self_improvement_rounded},
@@ -133,9 +149,15 @@ class _HomeScreenState extends State<HomeScreen> {
     AppCategory.womens: [
       {'type': ScaleType.cycle, 'title': '週期紀錄', 'sub': '生理期規律觀察', 'color': Colors.pinkAccent, 'icon': Icons.calendar_month_rounded},
     ],
-    // 🚀 新增：兒科發展
+    // 🚀 檢查 HomeScreen.dart 這裡的配置
     AppCategory.peds: [
-      {'type': ScaleType.growth, 'title': '生長數據', 'sub': '身高體重頭圍', 'color': Colors.lightBlue, 'icon': Icons.child_care_rounded},
+      {
+        'type': ScaleType.growth, // 👈 這裡千萬不能寫成 ScaleType.poem
+        'title': '生長數據',
+        'sub': '身高體重頭圍',
+        'color': Colors.lightBlue,
+        'icon': Icons.child_care_rounded
+      },
     ],
   };
 
@@ -170,11 +192,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _scrollController.dispose();
+    _bannerAd?.dispose();
+    _interstitialAd?.dispose(); // 🚀 記得釋放插頁廣告
+    super.dispose();
+  }
+
   // --- 🔐 權限與身份檢查 ---
   void _checkUserStatus() {
     if (FirebaseAuth.instance.currentUser == null) debugPrint(
         "⚠️ 訪客模式：未登入");
   }
+
 
   Future<void> _requestTrackingPermission() async {
     if (!Platform.isIOS) return;
@@ -311,26 +343,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // --- ⚙️ 設定持久化 (補回關鍵修正) ---
+  // 🚀 2. 修正：讀取最後一次使用的科別
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       for (var type in ScaleType.values) {
         _enabledScales[type] = prefs.getBool('enable_${type.name}') ?? true;
-        _reminderEnabled[type] =
-            prefs.getBool('reminder_enabled_${type.name}') ?? true;
-        _reminderDays[type] =
-            prefs.getInt('reminder_day_${type.name}') ?? DateTime.sunday;
+        _reminderEnabled[type] = prefs.getBool('reminder_enabled_${type.name}') ?? true;
+        _reminderDays[type] = prefs.getInt('reminder_day_${type.name}') ?? DateTime.sunday;
         final h = prefs.getInt('reminder_hour_${type.name}') ?? 20;
         final m = prefs.getInt('reminder_minute_${type.name}') ?? 0;
         _reminderTimes[type] = TimeOfDay(hour: h, minute: m);
       }
-      // 🚀 補齊兒科資料讀取
       _isBoy = prefs.getBool('child_is_boy') ?? true;
       final bStr = prefs.getString('child_birthday');
       if (bStr != null) _childBirthday = DateTime.parse(bStr);
-
-      final dStr = prefs.getString('child_due_date'); // 🚀 預產期
+      final dStr = prefs.getString('child_due_date'); // 補回預產期
       if (dStr != null) _childDueDate = DateTime.parse(dStr);
+
+      // 關鍵：讀取記憶的科別
+      final catIdx = prefs.getInt('last_category_index') ?? AppCategory.dermatology.index;
+      _currentCategory = AppCategory.values[catIdx];
     });
     _scheduleClinicalReminders();
   }
@@ -383,39 +416,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // --- ☁️ 數據備份與還原系統 (完整回歸) ---
-  void _refreshData() =>
-      setState(() {
-        _trackerDataFuture = _getTrackerData();
-      });
+  void _refreshData() {
+    setState(() {
+      _trackerDataFuture = _getTrackerData(); // 🚀 這樣才能確保 Future 只在資料變動時觸發
+    });
+  }
 
   Future<Map<String, dynamic>> _getTrackerData() async {
     final today = DateTime.now();
-    final start = DateTime(today.year, today.month, today.day).subtract(
-        const Duration(days: 8));
+    final start = DateTime(today.year, today.month, today.day).subtract(const Duration(days: 8));
     final all = await isarService.getAllRecords();
-    final uas7 = all.where((r) => r.scaleType == ScaleType.uas7).toList();
-    return {
-      'uas7Start': start,
-      'uas7Status': List.generate(14, (i) =>
-          uas7.any((r) =>
-              DateUtils.isSameDay(
-                  r.targetDate ?? r.date, start.add(Duration(days: i))))),
-      'uas7Records': uas7,
-      'adct': all.where((r) => r.scaleType == ScaleType.adct).toList()
-        ..sort((a, b) => b.date!.compareTo(a.date!)),
-      'poem': all.where((r) => r.scaleType == ScaleType.poem).toList()
-        ..sort((a, b) => b.date!.compareTo(a.date!)),
-      'scorad': all.where((r) => r.scaleType == ScaleType.scorad).toList()
-        ..sort((a, b) => b.date!.compareTo(a.date!)),
 
-// 🚀 新增：讓身心科與疼痛科也能正確抓到進度數據
-      'phq9': all.where((r) => r.scaleType == ScaleType.phq9).toList()
-        ..sort((a, b) => b.date!.compareTo(a.date!)),
-      'gad7': all.where((r) => r.scaleType == ScaleType.gad7).toList()
-        ..sort((a, b) => b.date!.compareTo(a.date!)),
-      'vas': all.where((r) => r.scaleType == ScaleType.vas).toList()
-        ..sort((a, b) => b.date!.compareTo(a.date!)),
+    // 建立基礎 Map
+    Map<String, dynamic> data = {
+      'uas7Start': start,
+      'uas7Status': List.generate(14, (i) => all.any((r) =>
+      r.scaleType == ScaleType.uas7 &&
+          DateUtils.isSameDay(r.targetDate ?? r.date, start.add(Duration(days: i))))),
+      'uas7Records': all.where((r) => r.scaleType == ScaleType.uas7).toList(),
     };
+
+    // 🚀 關鍵修正：自動抓取 ScaleType 清單中的所有數據
+    for (var type in ScaleType.values) {
+      data[type.name] = all.where((r) => r.scaleType == type).toList()
+        ..sort((a, b) => (b.targetDate ?? b.date ?? DateTime.now())
+            .compareTo(a.targetDate ?? a.date ?? DateTime.now()));
+    }
+
+    return data;
   }
 
   Future<int> _calculateDirectorySize(Directory dir) async {
@@ -595,10 +623,16 @@ class _HomeScreenState extends State<HomeScreen> {
         body: Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                child: Column(
-                  children: [
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    _refreshData(); // 🚀 重新抓取資料庫數據
+                    await Future.delayed(const Duration(milliseconds: 600)); // 給點緩衝時間
+                  },
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    physics: const AlwaysScrollableScrollPhysics(), // 🚀 關鍵：確保內容少也能拉
+                    child: Column(
+                      children: [
                     const SizedBox(height: 16),
                     _buildScaleGrid(context),
                     const SizedBox(height: 4),
@@ -609,10 +643,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildProgressSwiper(),
                     // ],
                     const SizedBox(height: 40),
-                  ],
-                ),
-              ),
-            ),
+                      ],
+                    ), // 1. 關閉 Column
+                  ), // 2. 關閉 SingleChildScrollView
+                ), // 3. 關閉 RefreshIndicator
+            ), // 4. 關鍵修正：補上這個關閉 Expanded 的括號
             if (_isAdLoaded && _bannerAd != null) _buildAdBanner(context),
           ],
         ),
@@ -690,10 +725,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // 🚀 3. 修正：記憶切換的科別
   Widget _buildTitleSelector(User? user, bool isDark) {
-    // 🚀 定義顯示名稱對應表
+    // 🚀 關鍵修正：在這裡補上缺失的分類，並按照你想要的順序排列
     final Map<AppCategory, String> catNames = {
       AppCategory.dermatology: "肌膚照護",
+      AppCategory.sleep: "睡眠健康",      // 👈 補上這行
+      AppCategory.chronic: "慢性病管理",  // 👈 補上這行
       AppCategory.psychiatry: "情緒照護",
       AppCategory.pain: "疼痛管理",
       AppCategory.rheumatology: "風濕免疫",
@@ -706,23 +744,31 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Padding(
         padding: const EdgeInsets.only(top: 15.0),
         child: PopupMenuButton<AppCategory>(
-          onSelected: (cat) {
+          onSelected: (cat) async {
             setState(() {
               _currentCategory = cat;
-              // 🚀 強制跳回虛擬初始頁面，確保索引重新計算，避免卡片顯示不匹配
               _pageController.jumpToPage(_virtualInitialPage);
             });
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt('last_category_index', cat.index);
             HapticFeedback.mediumImpact();
           },
-          itemBuilder: (ctx) => catNames.entries.map((e) =>
-              PopupMenuItem(value: e.key, child: Text(e.value))
-          ).toList(),
+          // 這裡會自動根據上面的 catNames 生成選單項目
+          itemBuilder: (ctx) => catNames.entries
+              .map((e) => PopupMenuItem(value: e.key, child: Text(e.value)))
+              .toList(),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                Text(catNames[_currentCategory] ?? "健康追蹤",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19, color: isDark ? Colors.white : Colors.blueGrey.shade900)),
+                Text(
+                    catNames[_currentCategory] ?? "健康追蹤",
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 19,
+                        color: isDark ? Colors.white : Colors.blueGrey.shade900
+                    )
+                ),
                 Icon(Icons.arrow_drop_down, color: isDark ? Colors.white70 : Colors.grey),
               ]),
               if (user?.email != null)
@@ -754,7 +800,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildScaleGrid(BuildContext context) {
     final List<Map<String, dynamic>> scales = _categoryConfigs[_currentCategory]!;
 
-// 🚀 計算總數：如果是兒科手動加 1
+    // 🚀 計算總數：如果是兒科手動加 1（為了插入寶寶資料按鈕）
     int totalCount = scales.length;
     if (_currentCategory == AppCategory.peds) totalCount += 1;
 
@@ -770,28 +816,33 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSpacing: 16,
             childAspectRatio: 1.1
         ),
-        itemCount: totalCount, // ✅ 這裡要用 totalCount，剛才手誤寫成 finalCount
+        itemCount: totalCount,
         itemBuilder: (ctx, i) {
-          // 🚀 2. 兒科特殊處理：固定在第二個位置 (Index 1) 插入「寶寶資料」按鈕
+          // 🚀 1. 兒科特殊處理：固定在第二個位置 (Index 1) 插入「寶寶資料」按鈕
           if (_currentCategory == AppCategory.peds && i == 1) {
             return _buildChildProfileButton();
           }
 
-// 計算正確的資料索引 (兒科 Index 1 被佔走，後面的要往回扣)
+          // 🚀 2. 計算正確的資料索引 (兒科 Index 1 被佔走，後面的要往回扣)
           int configIndex = (_currentCategory == AppCategory.peds && i > 1) ? i - 1 : i;
           if (configIndex >= scales.length) return const SizedBox.shrink();
+
           final config = scales[configIndex];
-          final dynamic type = config['type'];
-          bool isEnabled = (type is ScaleType) ? (_enabledScales[type] ?? true) : true;
+          final dynamic targetType = config['type']; // 確保抓到的是上面配置的 type
+
+          // 🚀 3. 判斷是否啟用 (只有 ScaleType 才需要檢查開關)
+          bool isEnabled = (targetType is ScaleType)
+              ? (_enabledScales[targetType] ?? true)
+              : true;
 
           return _AnimatedScaleCard(
             scale: config,
             isEnabled: isEnabled,
             isManagementMode: _isManagementMode,
             onTap: () async {
-              // 管理員模式切換
-              if (_isManagementMode && type is ScaleType) {
-                setState(() => _enabledScales[type] = !(_enabledScales[type] ?? true));
+              // 管理員模式：切換顯示/隱藏
+              if (_isManagementMode && targetType is ScaleType) {
+                setState(() => _enabledScales[targetType] = !(_enabledScales[targetType] ?? true));
                 return;
               }
 
@@ -807,11 +858,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 return;
               }
 
-              // 進入問卷邏輯
-              if (type is ScaleType) {
+              // 🚀 4. 進入問卷邏輯
+              if (targetType is ScaleType) {
+                debugPrint("🚀 準備進入問卷，傳入類型：$targetType"); // 加上這行 Debug
+                // 💡 這裡最關鍵：確保傳入的是 targetType，這樣存檔才不會變成 ScaleType.poem
                 final res = await Navigator.push<bool>(
                     context,
-                    MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: type))
+                    MaterialPageRoute(
+                      // 🚀 關鍵修正 2：這裡一定要傳 targetType
+                        builder: (ctx) => PoemSurveyScreen(initialType: targetType)
+                    )
                 );
 
                 if (res == true && mounted) {
@@ -819,12 +875,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   _refreshData();
                   _checkAndSilentBackup();
 
+                  // 皮膚科特殊邏輯：自動跳轉到對應的圖表卡片
                   if (_currentCategory == AppCategory.dermatology) {
                     Future.delayed(const Duration(milliseconds: 300), () {
-                      if (mounted) _jumpToScalePage(type);
+                      if (mounted) _jumpToScalePage(targetType);
                     });
                   }
                 }
+              } else {
+                // 如果 type 不是 ScaleType (例如是自訂 Function)，可以在這裡處理
+                if (config['onTap'] != null) config['onTap']();
               }
             },
             category: _currentCategory,
@@ -834,7 +894,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 🚀 畫出那個「寶寶資料」卡片
+  // 🚀 新增一個輔助方法計算年齡
+  String _getChildAgeStr() {
+    if (_childBirthday == null) return "點擊設定資料";
+    final now = DateTime.now();
+    final diff = now.difference(_childBirthday!);
+    final totalMonths = (diff.inDays / 30.4375).floor(); // 🚀 使用更精確的平均月天數
+
+    if (totalMonths < 1) return "${diff.inDays} 天大";
+    if (totalMonths < 24) return "$totalMonths 個月大";
+
+    // 🚀 超過兩歲顯示：X 歲 Y 個月
+    int years = totalMonths ~/ 12;
+    int remainingMonths = totalMonths % 12;
+    return remainingMonths == 0 ? "$years 歲" : "$years 歲 $remainingMonths 個月";
+  }
+
+  // 🚀 4. 修正：寶寶資料按鈕改用月齡顯示
   Widget _buildChildProfileButton() {
     final bool isSet = _childBirthday != null;
     return _AnimatedScaleCard(
@@ -843,11 +919,11 @@ class _HomeScreenState extends State<HomeScreen> {
       isManagementMode: false,
       scale: {
         'title': '寶寶資料',
-        'sub': isSet ? '${_isBoy ? "男寶" : "女寶"} · ${DateFormat('MM/dd').format(_childBirthday!)}' : '點擊設定資料',
+        'sub': isSet ? '${_isBoy ? "男寶" : "女寶"} · ${_getChildAgeStr()}' : '點擊設定資料',
         'color': Colors.orangeAccent,
         'icon': Icons.settings_accessibility_rounded,
       },
-      onTap: _showChildProfileEditor, // 🚀 點擊後彈出編輯器
+      onTap: _showChildProfileEditor,
     );
   }
 
@@ -1064,10 +1140,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
+  // 🚀 請確保這是你程式碼中唯一的 _isScaleInCategory 方法
   bool _isScaleInCategory(ScaleType type, AppCategory category) {
     switch (category) {
       case AppCategory.dermatology:
         return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(type);
+      // 🚀 補上睡眠健康
+      case AppCategory.sleep:
+        return [ScaleType.psqi, ScaleType.isi, ScaleType.ess].contains(type);
+       // 🚀 補上慢性病管理
+      case AppCategory.chronic:
+        return [ScaleType.bp_log, ScaleType.cat, ScaleType.dds, ScaleType.bpi].contains(type);
       case AppCategory.psychiatry:
         return [ScaleType.phq9, ScaleType.gad7].contains(type);
       case AppCategory.pain:
@@ -1089,6 +1172,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final history = data[type.name] as List<PoemRecord>? ?? [];
 
     switch (type) {
+    // 1. 蕁麻疹專用卡片 (保持不變)
       case ScaleType.uas7:
         return Uas7TrackerCard(
             startDate: data['uas7Start'],
@@ -1097,30 +1181,71 @@ class _HomeScreenState extends State<HomeScreen> {
             onRefresh: _refreshData
         );
 
-    // 🚀 兒科特殊處理
+    // 2. 兒科：生長數據 (cm/kg 動態切換)
       case ScaleType.growth:
-      // 根據最新一筆紀錄判定單位 (優先序：身高 > 體重 > 頭圍)
         String unit = "cm";
         if (history.isNotEmpty) {
           final last = history.first;
-          if (last.weight != null && last.height == null) unit = "kg";
+          // 🚀 權重：通常體重變化頻率高，有體重就先秀體重趨勢
+          if (last.weight != null) unit = "kg";
+          else if (last.height != null) unit = "cm";
+          else if (last.headCircumference != null) unit = "cm";
         }
         return WeeklyTrackerCard(
             type: type,
             history: history,
-            unit: unit, // 👈 傳入單位
+            unit: unit,
             onRefresh: _refreshData
         );
 
-    // 🚀 腸胃科與其他量表
+    // 3. 慢性病：血壓紀錄 (mmHg)
+      case ScaleType.bp_log:
+        return WeeklyTrackerCard(
+            type: type,
+            history: history,
+            unit: "mmHg", // 🚀 血壓專用標籤
+            onRefresh: _refreshData
+        );
+
+    // 4. 腸胃科：布里斯托便便分類 (型)
       case ScaleType.bristol:
-        return WeeklyTrackerCard(type: type, history: history, unit: "型", onRefresh: _refreshData);
+        return WeeklyTrackerCard(
+            type: type,
+            history: history,
+            unit: "型", // 🚀 第一型～第七型
+            onRefresh: _refreshData
+        );
 
-      case ScaleType.haq:
-        return WeeklyTrackerCard(type: type, history: history, unit: "分", onRefresh: _refreshData);
+    // 5. 所有的「評分型」量表 (統一使用「分」)
+    // 🚀 這裡包含你新增的：睡眠(PSQI/ISI)、慢性病(CAT/DDS)、疼痛(BPI/VAS)
+      case ScaleType.adct:
+      case ScaleType.poem:
+      case ScaleType.scorad:
+      case ScaleType.phq9:
+      case ScaleType.gad7:
+      case ScaleType.psqi: // 睡眠品質
+      case ScaleType.isi:  // 失眠程度
+      case ScaleType.ess:  // 嗜睡量表
+      case ScaleType.cat:  // 呼吸道
+      case ScaleType.dds:  // 糖尿病壓力
+      case ScaleType.bpi:  // 簡明疼痛
+      case ScaleType.vas:  // 疼痛強度
+      case ScaleType.haq:  // 功能評估
+        return WeeklyTrackerCard(
+            type: type,
+            history: history,
+            unit: "分",
+            onRefresh: _refreshData
+        );
 
+    // 6. 其他與預設
       default:
-        return WeeklyTrackerCard(type: type, history: history, unit: "分", onRefresh: _refreshData);
+        return WeeklyTrackerCard(
+            type: type,
+            history: history,
+            unit: "分", // 醫學量表標準單位
+            onRefresh: _refreshData
+        );
     }
   }
 
@@ -1472,20 +1597,19 @@ class _AnimatedScaleCard extends StatelessWidget {
 
                     // 🚀 關鍵修改點：使用跑馬燈顯示子標題
                     SizedBox(
-                      height: 30, // 🚀 固定高度，防止垂直方向溢出
+                      height: 30,
                       child: Marquee(
-                        key: ValueKey(scale['sub'] + category.name),
+                        // 🚀 使用 UniqueKey 或包含類別名稱的 Key，確保切換科別時會重整
+                        key: ValueKey("${scale['sub']}_${category.name}"),
                         text: scale['sub'],
                         style: subTextStyle,
                         scrollAxis: Axis.horizontal,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        blankSpace: 100.0,      // 🚀 文字循環之間的距離
-                        velocity: 30.0,        // 🚀 跑動速度
-                        pauseAfterRound: const Duration(hours: 1), // 🚀 跑完一圈停 3 秒，讓使用者能看清楚
+                        blankSpace: 80.0,
+                        velocity: 35.0,
+                        // 🚀 跑完一圈停 5 秒，使用者才能看清楚「身高/體重」數據
+                        pauseAfterRound: const Duration(seconds: 5),
                         accelerationDuration: const Duration(seconds: 1),
                         accelerationCurve: Curves.linear,
-                        decelerationDuration: const Duration(milliseconds: 500),
-                        decelerationCurve: Curves.easeOut,
                       ),
                     ),
                   ],

@@ -126,27 +126,41 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
 
   // --- 📊 圖表核心引擎 ---
 
-  LineChartData _mainData(List<PoemRecord> filtered, BuildContext context) {
-    if (filtered.isEmpty) return LineChartData();
+  _mainData(List<PoemRecord> filtered, BuildContext context) {
+    // 🚀 1. 定義「視覺區間」的起點與終點 (修正自訂時間對齊問題)
+    DateTime viewStart;
+    DateTime viewEnd;
 
-    final startDate = filtered.first.targetDate ?? filtered.first.date!;
-    final endDate = filtered.last.targetDate ?? filtered.last.date!;
-    final threshold = _getThresholdForScale(_selectedScale);
-    final double rawDays = endDate.difference(startDate).inMinutes / 1440;
+    if (_selectedDays == -1 && _customRange != null) {
+      viewStart = DateTime(_customRange!.start.year, _customRange!.start.month, _customRange!.start.day);
+      viewEnd = DateTime(_customRange!.end.year, _customRange!.end.month, _customRange!.end.day);
+    } else {
+      final int days = _selectedDays == -1 ? 7 : _selectedDays;
+      viewEnd = DateTime.now();
+      DateTime tempStart = viewEnd.subtract(Duration(days: days - 1));
+      viewStart = DateTime(tempStart.year, tempStart.month, tempStart.day);
+    }
 
-    double bottomInterval = rawDays > 60 ? 14.0 : (rawDays > 20 ? 7.0 : (rawDays >= 10 ? 3.0 : 1.0));
+    final double totalDays = viewEnd.difference(viewStart).inMinutes / 1440;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final gridColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
     final textColor = isDark ? Colors.grey.shade400 : Colors.blueGrey;
     final color = _getLineColor(_selectedScale);
+    final threshold = _getThresholdForScale(_selectedScale);
 
     List<LineChartBarData> allLines = [];
     if (_selectedScale == ScaleType.growth) {
-      allLines.addAll(_getGrowthBackgroundLines(startDate));
+      // 🚀 2. 繪製 WHO 參考線 (傳入視覺起點)
+      allLines.addAll(_getGrowthBackgroundLines(viewStart));
     }
-    allLines.add(_getLineData(filtered, startDate));
+    // 🚀 3. 繪製紀錄線 (傳入視覺起點)
+    allLines.add(_getLineData(filtered, viewStart));
 
     return LineChartData(
+      // 🚀 關鍵修正：開啟全域裁剪
+      // 這會強制把超出 minX, maxX, minY, maxY 範圍的所有線條直接切掉
+      // 這樣背景線就算數據點在 -60，畫面上也會整齊地斷在 0 的位置
+      clipData: const FlClipData.all(),
       lineTouchData: LineTouchData(
         touchCallback: (event, res) { if (event is FlPanStartEvent || event is FlTapDownEvent) HapticFeedback.selectionClick(); },
         handleBuiltInTouches: true,
@@ -155,7 +169,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
           getTooltipItems: (touchedSpots) {
             return touchedSpots.map((spot) {
               if (spot.barIndex < allLines.length - 1 && _selectedScale == ScaleType.growth) return null;
-              final date = startDate.add(Duration(minutes: (spot.x * 1440).toInt()));
+              final date = viewStart.add(Duration(minutes: (spot.x * 1440).toInt()));
               bool dec = (_selectedScale == ScaleType.growth && _growthViewMode == 'weight') || (_selectedScale == ScaleType.haq);
               String valStr = dec ? spot.y.toStringAsFixed(1) : spot.y.toInt().toString();
               String unit = _selectedScale == ScaleType.growth ? (_growthViewMode == 'weight' ? " kg" : " cm") : " 分";
@@ -170,7 +184,8 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
           },
         ),
       ),
-      minX: -0.2, maxX: rawDays < 0.5 ? 1.0 : rawDays + 0.8,
+      minX: 0,
+      maxX: totalDays,
       minY: _selectedScale == ScaleType.growth ? _getMinYForGrowth(filtered) : 0,
       maxY: _getMaxYForScale(_selectedScale, filtered),
       lineBarsData: allLines,
@@ -192,16 +207,18 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
             return SideTitleWidget(meta: meta, child: Text(dec ? value.toStringAsFixed(1) : value.toInt().toString(), style: TextStyle(color: textColor, fontSize: 10)));
           },
         )),
-        bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 44, interval: bottomInterval,
+        bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 44,
+          interval: totalDays > 30 ? (totalDays / 5) : (totalDays > 10 ? 4.0 : 2.0),
           getTitlesWidget: (v, m) {
-            if (v < 0 || v > rawDays + 0.1) return const SizedBox.shrink();
-            return SideTitleWidget(meta: m, child: Padding(padding: const EdgeInsets.only(top: 8), child: Text(DateFormat('MM/dd').format(startDate.add(Duration(minutes: (v * 1440).toInt()))), style: TextStyle(fontSize: 10, color: textColor, fontWeight: FontWeight.bold))));
+            if (v < 0 || v > totalDays + 0.1) return const SizedBox.shrink();
+            final date = viewStart.add(Duration(minutes: (v * 1440).toInt()));
+            return SideTitleWidget(meta: m, child: Padding(padding: const EdgeInsets.only(top: 8), child: Text(DateFormat('MM/dd').format(date), style: TextStyle(fontSize: 10, color: textColor, fontWeight: FontWeight.bold))));
           },
         )),
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
       ),
-      gridData: FlGridData(show: true, verticalInterval: bottomInterval, horizontalInterval: _getIntervalForScale(_selectedScale)),
+      gridData: FlGridData(show: true, verticalInterval: totalDays > 30 ? (totalDays / 5) : (totalDays > 10 ? 4.0 : 2.0), horizontalInterval: _getIntervalForScale(_selectedScale)),
       borderData: FlBorderData(show: true, border: Border(bottom: BorderSide(color: gridColor, width: 2), left: BorderSide(color: gridColor, width: 2))),
     );
   }
@@ -218,6 +235,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
       double y = (r.scaleType == ScaleType.growth)
           ? (_growthViewMode == 'weight' ? (r.weight ?? 0.0) : (_growthViewMode == 'head' ? (r.headCircumference ?? 0.0) : (r.height ?? 0.0)))
           : (r.score ?? 0).toDouble();
+      // 🚀 使用相對於顯示起點的偏移量
       return FlSpot((r.targetDate ?? r.date!).difference(startDate).inMinutes / 1440.0, y);
     }).where((s) => _selectedScale == ScaleType.growth ? s.y > 0 : true).toList();
 
@@ -228,18 +246,33 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     );
   }
 
-  List<LineChartBarData> _getGrowthBackgroundLines(DateTime startDate) {
+  List<LineChartBarData> _getGrowthBackgroundLines(DateTime chartStartDate) {
     if (_childBirthday == null) return [];
-    final double offset = startDate.difference(_childBirthday!).inDays.toDouble();
+    // 計算圖表左邊緣相對於寶寶生日的天數
+    final double offsetDays = chartStartDate.difference(_childBirthday!).inDays.toDouble();
+
     List<List<FlSpot>> raw;
     if (_growthViewMode == 'weight') raw = _isBoy ? BoyWeightData.allPercentiles : GirlWeightData.allPercentiles;
     else if (_growthViewMode == 'head') raw = _isBoy ? BoyHeadCircumferenceData.allPercentiles : GirlHeadCircumferenceData.allPercentiles;
     else raw = _isBoy ? BoyHeightData.allPercentiles : GirlHeightData.allPercentiles;
 
-    return raw.map((spots) => LineChartBarData(
-      spots: spots.map((s) => FlSpot(s.x * 30.4375 - offset, s.y)).where((s) => s.x >= -30 && s.x <= _selectedDays + 30).toList(),
-      isCurved: true, color: Colors.grey.withOpacity(0.15), barWidth: 1.2, dashArray: [5, 5], dotData: const FlDotData(show: false),
-    )).toList();
+    // 🚀 關鍵修正：加上型別推斷 <LineChartBarData> 並刪除不存在的參數
+    return raw.map<LineChartBarData>((percentileSpots) {
+      return LineChartBarData(
+        spots: percentileSpots.map((s) {
+          return FlSpot(s.x * 30.4375 - offsetDays, s.y);
+        }).where((s) {
+          // 🚀 寬鬆過濾，確保曲線延伸到左右邊界
+          double range = _selectedDays == -1 ? 90 : _selectedDays.toDouble();
+          return s.x >= -60 && s.x <= range + 60;
+        }).toList(),
+        isCurved: true,
+        color: Colors.grey.withOpacity(0.3),
+        barWidth: 1.2,
+        dashArray: [5, 5],
+        dotData: const FlDotData(show: false),
+      );
+    }).toList();
   }
 
   double _getMinYForGrowth(List<PoemRecord> filtered) {
@@ -383,7 +416,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
           ),
           padding: const EdgeInsets.fromLTRB(8, 16, 24, 0),
           child: () {
-            // 🚀 優先級 1：如果是兒科且沒設生日，不管有沒有紀錄，都先叫他去設定
+            // 🚀 優先級 1：如果是兒科且沒設生日 (這段保留)
             if (_selectedScale == ScaleType.growth && _childBirthday == null) {
               return Center(
                 child: Column(
@@ -413,14 +446,20 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
               );
             }
 
-            // 🚀 優先級 2：沒資料
+            // 🚀 優先級 2：兒科生長數據特殊分支
+            if (_selectedScale == ScaleType.growth) {
+              // 💡 關鍵：不管是空是滿，都直接畫 LineChart，這樣才看得到背景參考線
+              return LineChart(_mainData(filtered, context));
+            }
+
+            // 🚀 優先級 3：其他量表 (ADCT/POEM...)，沒紀錄時維持顯示文字
             if (filtered.isEmpty) {
               return const Center(child: Text("目前此指標無紀錄", style: TextStyle(color: Colors.grey)));
             }
 
-            // 🚀 優先級 3：正常繪圖
+            // 🚀 優先級 4：正常繪圖
             return LineChart(_mainData(filtered, context));
-          }(), // 這裡用一個立即執行的匿名函數來處理複雜判斷
+          }(),
         ),
       ),
     );
@@ -449,10 +488,11 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
     ]);
   }
 
+  // 🚀 請找到 _showChildProfileEditor 方法，將內容替換為這個精簡版
   void _showChildProfileEditor() {
     bool tempIsBoy = _isBoy;
     DateTime tempBirthday = _childBirthday ?? DateTime.now();
-    DateTime tempDueDate = _childDueDate ?? tempBirthday; // 🚀 預設跟隨生日
+    DateTime tempDueDate = _childDueDate ?? tempBirthday; // 預設跟隨生日
 
     showModalBottomSheet(
       context: context,
@@ -467,7 +507,6 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
               children: [
                 const Text("寶寶基本資料設定", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 24),
-
                 // 1. 性別切換
                 _buildSettingTile(
                   icon: tempIsBoy ? Icons.boy_rounded : Icons.girl_rounded,
@@ -482,9 +521,7 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                     onSelectionChanged: (v) => setModalState(() => tempIsBoy = v.first),
                   ),
                 ),
-
                 const Divider(height: 32),
-
                 // 2. 出生日期
                 _buildSettingTile(
                   icon: Icons.cake_rounded,
@@ -493,36 +530,15 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                   subtitle: DateFormat('yyyy / MM / dd').format(tempBirthday),
                   onTap: () async {
                     final picked = await showDatePicker(context: context, initialDate: tempBirthday, firstDate: DateTime(2020), lastDate: DateTime.now());
-                    if (picked != null) setModalState(() => tempBirthday = picked);
-                  },
-                ),
-
-                // 3. 預產期 (早產兒矯正年齡評估用)
-                _buildSettingTile(
-                  icon: Icons.child_friendly_rounded,
-                  iconColor: Colors.teal,
-                  title: "預產期 (選填)",
-                  subtitle: DateFormat('yyyy / MM / dd').format(tempDueDate),
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      // 🚀 關鍵改動：將初始日期設為 tempBirthday
-                      // 這樣當使用者點開日曆時，會直接停在他們剛剛選好的出生日期那一天
-                      initialDate: tempBirthday,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2027),
-                    );
                     if (picked != null) {
                       setModalState(() {
                         tempBirthday = picked;
-                        // 🚀 UX 進階連動：選完生日，自動把預產期也先設成那一天，方便後續微調
-                        tempDueDate = picked;
+                        tempDueDate = picked; // 🚀 選完生日，預產期自動對齊，方便微調
                       });
                     }
                   },
                 ),
-
-// 3. 預產期 (修正後的邏輯)
+                // 3. 預產期 (保留這一個就好)
                 _buildSettingTile(
                   icon: Icons.child_friendly_rounded,
                   iconColor: Colors.teal,
@@ -531,43 +547,25 @@ class _TrendChartScreenState extends State<TrendChartScreen> {
                   onTap: () async {
                     final picked = await showDatePicker(
                       context: context,
-                      initialDate: tempBirthday, // 🚀 關鍵改動：日曆自動打開在「出生日期」那一天
+                      initialDate: tempBirthday, // 🚀 關鍵：從生日開始選
                       firstDate: DateTime(2020),
                       lastDate: DateTime(2027),
                     );
-                    if (picked != null) {
-                      setModalState(() {
-                        // ✅ 修正：這裡「只」更新預產期，不應該動到 tempBirthday
-                        tempDueDate = picked;
-                      });
-                    }
+                    if (picked != null) setModalState(() => tempDueDate = picked);
                   },
                 ),
-
                 const SizedBox(height: 32),
-
                 // 儲存按鈕
                 SizedBox(
-                  width: double.infinity,
-                  height: 55,
+                  width: double.infinity, height: 55,
                   child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
-                    ),
+                    style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
                     onPressed: () async {
                       final prefs = await SharedPreferences.getInstance();
                       await prefs.setBool('child_is_boy', tempIsBoy);
                       await prefs.setString('child_birthday', tempBirthday.toIso8601String());
-                      await prefs.setString('child_due_date', tempDueDate.toIso8601String()); // 這裡一定要存
-
-                      setState(() {
-                        _isBoy = tempIsBoy;
-                        _childBirthday = tempBirthday;
-                        _childDueDate = tempDueDate; // 🚀 更新當前狀態
-                      });
-
+                      await prefs.setString('child_due_date', tempDueDate.toIso8601String());
+                      setState(() { _isBoy = tempIsBoy; _childBirthday = tempBirthday; _childDueDate = tempDueDate; });
                       HapticFeedback.mediumImpact();
                       Navigator.pop(context);
                     },

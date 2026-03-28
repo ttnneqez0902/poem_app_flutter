@@ -7,6 +7,7 @@ import '../models/scale_config.dart';
 import '../main.dart';
 import '../services/export_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:isar/isar.dart';
 import 'poem_survey_screen.dart';
 
 class HistoryListScreen extends StatefulWidget {
@@ -44,6 +45,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 🚀 診斷 1：確認目前頁面的類別
+    debugPrint("--- 歷史頁面診斷開始 ---");
+    debugPrint("當前頁面類別 (Category): ${widget.currentCategory}");
+
     if (_enabledScales.isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -62,24 +67,38 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
         children: [
           _buildDynamicFilterChips(),
           Expanded(
-            child: FutureBuilder<List<PoemRecord>>(
-              future: isarService.getAllRecords(),
+            child: StreamBuilder<List<PoemRecord>>(
+              stream: isarService.isar.poemRecords.where().watch(fireImmediately: true),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
                 final allRecords = snapshot.data ?? [];
+                // 🚀 診斷 2：看看資料庫到底有沒有東西
+                debugPrint("Isar 原生抓到總筆數: ${allRecords.length}");
 
                 final filteredRecords = allRecords.where((r) {
-                  if (!_isScaleInCategory(r.scaleType, widget.currentCategory)) return false;
-                  if (!(_enabledScales[r.scaleType] ?? true)) return false;
-                  if (_selectedScaleType != null && r.scaleType != _selectedScaleType) return false;
-                  return true;
+                  // 🚀 診斷 3：針對每一筆紀錄進行「過濾原因」分析
+                  bool inCat = _isScaleInCategory(r.scaleType, widget.currentCategory);
+                  bool enabled = _enabledScales[r.scaleType] ?? true;
+                  bool typeMatch = _selectedScaleType == null || r.scaleType == _selectedScaleType;
+
+                  if (!inCat || !enabled || !typeMatch) {
+                    debugPrint("❌ 紀錄 ID:${r.id} 被過濾 | 類別符不符:$inCat (紀錄是:${r.scaleType}) | 開關是否開啟:$enabled | 篩選鈕是否對準:$typeMatch");
+                  } else {
+                    debugPrint("✅ 紀錄 ID:${r.id} 通過過濾，準備顯示");
+                  }
+
+                  return inCat && enabled && typeMatch;
                 }).toList();
 
+                // 排序邏輯
                 filteredRecords.sort((a, b) => (b.targetDate ?? b.date ?? DateTime.now())
                     .compareTo(a.targetDate ?? a.date ?? DateTime.now()));
+
+                debugPrint("最後顯示筆數: ${filteredRecords.length}");
+                debugPrint("--- 歷史頁面診斷結束 ---");
 
                 if (filteredRecords.isEmpty) return _buildEmptyState();
 
@@ -143,32 +162,35 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
   }
 
   Widget _buildRecordCard(BuildContext context, PoemRecord record) {
-    // 🚀 1. 決定量表縮寫標題
-    String scaleTitle = record.scaleType.name.toUpperCase();
-    if (record.scaleType == ScaleType.phq9) scaleTitle = "PHQ-9";
-    if (record.scaleType == ScaleType.gad7) scaleTitle = "GAD-7";
-
-    // 🚀 2. 關鍵修正：動態處理數值與單位 (解決兒科與腸胃科顯示錯誤)
+    // 🚀 使用你定義的方法，不要再手動 upperCase
+    String scaleTitle = _getShortScaleName(record.scaleType);
     String valueDisplay = "";
-    if (record.scaleType == ScaleType.growth) {
-      // 兒科邏輯：判斷目前紀錄的是哪一項
-      if (record.height != null) valueDisplay = "${record.height} cm";
-      else if (record.weight != null) valueDisplay = "${record.weight} kg";
-      else if (record.headCircumference != null) valueDisplay = "${record.headCircumference} cm";
-    } else if (record.scaleType == ScaleType.bristol) {
-      valueDisplay = "${record.score?.toInt() ?? 0} 型";
-    } else if (record.scaleType == ScaleType.haq) {
-      valueDisplay = "${record.score?.toStringAsFixed(1) ?? 0} 分";
-    } else {
-      valueDisplay = "${record.score ?? 0} 分";
+
+    switch (record.scaleType) {
+      case ScaleType.growth:
+        if (record.height != null) valueDisplay = "${record.height} cm";
+        else if (record.weight != null) valueDisplay = "${record.weight} kg";
+        else if (record.headCircumference != null) valueDisplay = "${record.headCircumference} cm";
+        break;
+      case ScaleType.cycle:
+      // 🚀 假設你以後會在 score 存經期第幾天
+        valueDisplay = record.score != null ? "第 ${record.score} 天" : "紀錄完成";
+        break;
+      case ScaleType.bristol:
+        valueDisplay = "第 ${record.score?.toInt() ?? 0} 型";
+        break;
+      case ScaleType.ibs_sss:
+      case ScaleType.haq:
+      default:
+        valueDisplay = "${record.score ?? 0} 分";
     }
 
-    // 🚀 3. 處理狀態標籤 (如果是兒科，顯示模式名稱而不是嚴重度)
     String statusLabel = record.severityLabel;
+    // 🚀 優化標籤：兒科顯示數據類型，女性健康顯示生理紀錄
     if (record.scaleType == ScaleType.growth) {
-      if (record.height != null) statusLabel = "身高紀錄";
-      else if (record.weight != null) statusLabel = "體重紀錄";
-      else statusLabel = "頭圍紀錄";
+      statusLabel = record.height != null ? "身高" : (record.weight != null ? "體重" : "頭圍");
+    } else if (record.scaleType == ScaleType.cycle) {
+      statusLabel = "生理期紀錄";
     }
 
     final Color statusColor = record.severityColor;
@@ -246,24 +268,28 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
     switch (category) {
       case AppCategory.dermatology:
         return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(type);
+
+    // 🚀 關鍵修正 1：補上睡眠健康，歷史清單才看得到 ISI/PSQI/ESS
+      case AppCategory.sleep:
+        return [ScaleType.psqi, ScaleType.isi, ScaleType.ess].contains(type);
+
+    // 🚀 關鍵修正 2：補上慢性病管理，歷史清單才看得到血壓/CAT/DDS
+      case AppCategory.chronic:
+        return [ScaleType.bp_log, ScaleType.cat, ScaleType.dds, ScaleType.bpi].contains(type);
+
       case AppCategory.psychiatry:
         return [ScaleType.phq9, ScaleType.gad7].contains(type);
       case AppCategory.pain:
         return type == ScaleType.vas;
       case AppCategory.rheumatology:
-      // 🚀 風濕免疫科通常看 HAQ 功能評估或 VAS 疼痛
         return [ScaleType.haq, ScaleType.vas].contains(type);
       case AppCategory.gastro:
-      // 🚀 腸胃科看布里斯托便便分類或 IBS 嚴重度
         return [ScaleType.bristol, ScaleType.ibs_sss].contains(type);
       case AppCategory.womens:
-      // 🚀 女性健康看生理週期
         return type == ScaleType.cycle;
       case AppCategory.peds:
-      // 🚀 兒科看生長曲線
         return type == ScaleType.growth;
       default:
-      // 🚀 如果找不到對應科別，預設不屬於該分類
         return false;
     }
   }

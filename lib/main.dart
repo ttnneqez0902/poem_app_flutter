@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:flutter/services.dart'; // 🚀 必加：處理系統 UI
 import 'dart:io';
 
 import 'firebase_options.dart';
@@ -24,7 +25,9 @@ final bootstrapController = BootstrapController();
 final appLifecycleHandler = AppLifecycleHandler();
 
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
+// 🚀 關鍵修正：補回這兩行！
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+final GlobalKey<ScaffoldMessengerState> messengerKey = GlobalKey<ScaffoldMessengerState>();
 
 String? pendingPayload;
 
@@ -36,20 +39,41 @@ void handleNotificationJump(String payload) {
   );
 
   if (navigatorKey.currentState != null) {
-    debugPrint("🔔 [Nav] 通知觸發：跳轉至 ${targetType.name}");
+    debugPrint("🔔 [Nav] 通知觸發：清理堆疊並跳轉至 ${targetType.name}");
+
+    // 使用 pushAndRemoveUntil 或是先 pop 到首頁再 push，避免頁面無限疊加
+    navigatorKey.currentState!.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
+          (route) => false, // 先回到首頁
+    );
+
+    // 再推入問卷頁
     navigatorKey.currentState!.push(
       MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: targetType)),
     );
   }
 }
 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🚀 1. 取得系統當前亮度，確保啟動畫面的狀態列顏色正確
+  final Brightness systemBrightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+  final bool isDarkMode = systemBrightness == Brightness.dark;
+
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // 🚀 修正這裡：使用剛剛抓到的 isDarkMode
+  SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: isDarkMode ? Brightness.light : Brightness.dark,
+    systemNavigationBarColor: isDarkMode ? const Color(0xFF121212) : Colors.white,
+    systemNavigationBarIconBrightness: isDarkMode ? Brightness.light : Brightness.dark,
+  ));
+
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  // 🚀 註冊監聽器
   WidgetsBinding.instance.addObserver(appLifecycleHandler);
-
   await _initServices();
   runApp(const MyApp());
 }
@@ -82,39 +106,58 @@ Future<void> _initServices() async {
 bool _isSyncingGlobal = false;
 DateTime? _lastSync;
 
-Future<void> globalSyncTask() async {
+// 🚀 修改建議：支援強制觸發與視覺回饋
+Future<void> globalSyncTask({bool force = false}) async {
   final user = FirebaseAuth.instance.currentUser;
   if (user == null) return;
 
-  // 1. 🚀 節流鎖 (2 分鐘)
-  if (_lastSync != null &&
+  // 1. 🚀 節流鎖 (如果非強制同步，則受 2 分鐘限制)
+  if (!force && _lastSync != null &&
       DateTime.now().difference(_lastSync!) < const Duration(minutes: 2)) {
     debugPrint("⏳ [Sync Skip] 距離上次同步不到 2 分鐘，跳過。");
     return;
   }
 
   if (_isSyncingGlobal) return;
-
   _isSyncingGlobal = true;
 
   try {
-    // 🚀 先列印啟動資訊
-    debugPrint("📡 [Sync Start] User: ${user.uid} | Time: ${DateTime.now().toIso8601String()}");
+    debugPrint("📡 [Sync Start] 正在上傳臨床數據...");
 
-    // 2. 🚀 執行同步並接收數據化結果
+    // 2. 🚀 執行同步
     final result = await syncManager.performPushSync();
 
-    if (result.total > 0) {
-      debugPrint("🏁 [Sync Success] 處理: ${result.total} | 成功: ${result.success} | 失敗: ${result.failed}");
+    // 3. 🚀 增加使用者感知的回饋 (UX)
+    if (result.success > 0) {
+      debugPrint("🏁 [Sync Success] 成功同步 ${result.success} 筆資料");
+
+      // 💡 如果有註冊 messengerKey，可以跳一個簡單的提示
+      messengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: Text("✅ 已安全同步 ${result.success} 筆紀錄至雲端"),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    } else if (result.total > 0 && result.failed > 0) {
+      debugPrint("⚠️ [Sync Partial] 部分失敗：${result.failed} 筆");
     } else {
-      debugPrint("📭 [Sync Skip] 目前無待同步數據");
+      debugPrint("📭 [Sync Skip] 無需同步新數據");
     }
 
     // ✅ 全部執行完畢且沒拋出異常，才更新「最後同步時間」
     _lastSync = DateTime.now();
 
   } catch (e) {
-    debugPrint("⚠️ [Sync Failed] 將於下次週期重試: $e");
+    debugPrint("⚠️ [Sync Failed] 網路或權限異常: $e");
+
+    // 如果是強制同步卻失敗，提示使用者
+    if (force) {
+      messengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text("❌ 同步失敗，請檢查網路連線")),
+      );
+    }
   } finally {
     _isSyncingGlobal = false;
   }
@@ -137,16 +180,38 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
-      valueListenable: themeNotifier,
-      builder: (_, mode, __) => MaterialApp(
-        navigatorKey: navigatorKey,
-        title: 'CareSync 健康隨行',
-        debugShowCheckedModeBanner: false,
-        themeMode: mode,
-        theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blue, brightness: Brightness.light),
-        darkTheme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blue, brightness: Brightness.dark),
-        home: const BootstrapScreen(),
-      ),
+        valueListenable: themeNotifier,
+        builder: (_, mode, __) {
+          // 🚀 4. 根據主題自動切換狀態列圖示顏色 (深色模式配白字，淺色模式配黑字)
+          final isDark = mode == ThemeMode.dark ||
+              (mode == ThemeMode.system && MediaQuery.of(_).platformBrightness == Brightness.dark);
+
+          SystemChrome.setSystemUIOverlayStyle(isDark
+              ? SystemUiOverlayStyle.light // 深色模式，狀態列圖示用白色
+              : SystemUiOverlayStyle.dark  // 淺色模式，狀態列圖示用黑色
+          );
+
+          return MaterialApp(
+            navigatorKey: navigatorKey,
+            scaffoldMessengerKey: messengerKey, // 🚀 註冊這一行
+            title: 'CareSync 健康隨行',
+            debugShowCheckedModeBanner: false,
+            themeMode: mode,
+            // 🚀 5. 全域主題美化 (使用具備臨床感的 Teal 色調)
+            theme: ThemeData(
+              useMaterial3: true,
+              colorSchemeSeed: Colors.blue.shade700,
+              brightness: Brightness.light,
+              visualDensity: VisualDensity.adaptivePlatformDensity,
+            ),
+            darkTheme: ThemeData(
+              useMaterial3: true,
+              colorSchemeSeed: Colors.blue,
+              brightness: Brightness.dark,
+            ),
+            home: const BootstrapScreen(),
+          );
+        },
     );
   }
 }

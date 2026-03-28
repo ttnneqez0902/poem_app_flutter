@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
-import 'package:marquee/marquee.dart'; // 🚀 1. 確保引入這個
 import '../models/poem_record.dart';
 import '../screens/poem_survey_screen.dart';
 import '../models/scale_config.dart';
@@ -9,10 +8,8 @@ import '../models/scale_config.dart';
 class WeeklyTrackerCard extends StatefulWidget {
   final ScaleType type;
   final List<PoemRecord> history;
-  final String unit; // 🚀 1. 新增這個
+  final String unit;
   final VoidCallback? onRefresh;
-
-  // 🚀 1. 新增接收外部傳入的時間字串與點擊事件
   final String? reminderText;
   final VoidCallback? onReminderTap;
 
@@ -20,10 +17,10 @@ class WeeklyTrackerCard extends StatefulWidget {
     super.key,
     required this.type,
     required this.history,
-    this.unit = "分", // 🚀 2. 預設值為分
+    this.unit = "分",
     this.onRefresh,
-    this.reminderText,   // 🚀 加入建構子
-    this.onReminderTap,  // 🚀 加入建構子
+    this.reminderText,
+    this.onReminderTap,
   });
 
   @override
@@ -44,7 +41,6 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     _scrollController.dispose();
     super.dispose();
   }
-
 
   void _scrollToCurrentWeek() {
     if (!_scrollController.hasClients) return;
@@ -67,11 +63,12 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
   PoemRecord? _getRecordInWeek(DateTime weekStart) {
     final weekEnd = weekStart.add(const Duration(days: 7));
     try {
-      return widget.history.firstWhere((r) =>
-      (r.targetDate ?? r.date!) != null &&
-          ((r.targetDate ?? r.date!).isAtSameMomentAs(weekStart) || (r.targetDate ?? r.date!).isAfter(weekStart)) &&
-          (r.targetDate ?? r.date!).isBefore(weekEnd)
-      );
+      return widget.history.firstWhere((r) {
+        final d = r.targetDate ?? r.date;
+        return d != null &&
+            (d.isAtSameMomentAs(weekStart) || d.isAfter(weekStart)) &&
+            d.isBefore(weekEnd);
+      });
     } catch (_) {
       return null;
     }
@@ -97,22 +94,21 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       elevation: 4,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(title, color, isCompletedThisWeek),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             SingleChildScrollView(
               controller: _scrollController,
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: List.generate(schedule.length, (index) {
                   final weekStartDate = schedule[index];
                   final record = _getRecordInWeek(weekStartDate);
@@ -121,26 +117,22 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                   final bool canFill = !isDone && !weekStartDate.isAfter(now);
 
                   return Padding(
-                    padding: const EdgeInsets.only(right: 12),
+                    padding: const EdgeInsets.only(right: 14),
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          height: 24,
-                          child: Text(
-                            "${DateFormat('M').format(weekStartDate)}月",
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: (isDone || isTodayWeek) ? color : Colors.blueGrey.shade200
-                            ),
+                        Text(
+                          "${DateFormat('M').format(weekStartDate)}月",
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: (isDone || isTodayWeek) ? color : Colors.blueGrey.shade200
                           ),
                         ),
                         const SizedBox(height: 8),
                         _buildDateSquare(weekStartDate, isDone, isTodayWeek, canFill, color, record),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 40,
+                          height: 35,
                           child: Text(
                             isDone
                                 ? _getTimeString(record!, weekStartDate)
@@ -148,11 +140,8 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 10,
-                                height: 1.1,
-                                color: isDone && (record.date!.difference(weekStartDate).inDays >= 7)
-                                    ? Colors.orange.shade800
-                                    : (isTodayWeek ? color : (isDone ? color : Colors.grey.shade600)),
-                                fontWeight: (isDone || isTodayWeek || canFill) ? FontWeight.bold : FontWeight.normal
+                                color: isDone ? color : Colors.grey.shade600,
+                                fontWeight: (isDone || isTodayWeek) ? FontWeight.bold : FontWeight.normal
                             ),
                           ),
                         ),
@@ -169,100 +158,44 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
   }
 
   Widget _buildHeader(String title, Color color, bool isCompleted) {
-    // 🚀 抓取最新一筆紀錄 (history 已經在 home_screen 排序過了，第一筆就是最新)
     final lastRecord = widget.history.isNotEmpty ? widget.history.first : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 第一行：標題跑馬燈 + 提醒/狀態圖示
+        // 🚀 請修改 lib/widgets/weekly_tracker_card.dart 中的這一段
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
+            // 1. 👈 將任務狀態文字包在 Expanded 裡面
             Expanded(
-              child: SizedBox(
-                height: 32,
-                child: Marquee(
-                  key: ValueKey(widget.type),
-                  text: "$title 紀錄進度",
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 17,
-                      color: color.withOpacity(0.8)
-                  ),
-                  scrollAxis: Axis.horizontal,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  blankSpace: 50.0,
-                  velocity: 30.0,
-                  pauseAfterRound: const Duration(hours: 1),
-                  accelerationDuration: const Duration(seconds: 1),
-                  accelerationCurve: Curves.linear,
-                  decelerationDuration: const Duration(milliseconds: 500),
-                  decelerationCurve: Curves.easeOut,
+              child: Text(
+                isCompleted ? "🎉 周任務已完成" : "🔔 周任務未完成",
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: isCompleted ? Colors.green : Colors.orange.shade800
                 ),
+                maxLines: 1, // 🚀 確保不換行
+                overflow: TextOverflow.ellipsis, // 🚀 超過寬度時顯示 ...
               ),
             ),
+
+            // 2. 🚀 增加一個微小的間距，避免文字跟膠囊貼在一起
             const SizedBox(width: 8),
 
-            if (widget.reminderText != null && widget.onReminderTap != null)
-              InkWell(
-                onTap: widget.onReminderTap,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: color.withOpacity(0.3), width: 1),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.alarm_rounded, size: 14, color: color),
-                      const SizedBox(width: 4),
-                      Text(
-                        widget.reminderText!,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              Icon(
-                  isCompleted ? Icons.check_circle : Icons.pending_actions,
-                  size: 20,
-                  color: isCompleted ? Colors.green : Colors.orange
-              ),
-          ],
-        ),
-
-        const SizedBox(height: 6),
-
-        // 🚀 關鍵修正第二行：左邊任務狀態 + 右邊最新數值膠囊
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              isCompleted ? "🎉 周任務已完成" : "🔔 周任務未完成",
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: isCompleted ? Colors.green : Colors.orange.shade800
-              ),
-            ),
-
-            // 🚀 只有在有歷史紀錄時才顯示「最新」數值
+            // 3. 最新數值膠囊 (保持不變)
             if (lastRecord != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  "最新：${_formatLastValue(lastRecord)}", // 👈 呼叫下面定義的格式化方法
+                  "最新：${_formatLastValue(lastRecord)}",
                   style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 12, // 🚀 稍微調小一點點（從 13 降到 12），血壓數值比較長
                       fontWeight: FontWeight.w900,
                       color: color
                   ),
@@ -274,71 +207,68 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
     );
   }
 
-// 🚀 整合後的數值格式化工具
+  Widget _buildReminderChip(Color color) {
+    return InkWell(
+      onTap: widget.onReminderTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3), width: 1),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.alarm_rounded, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(widget.reminderText!, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _formatLastValue(PoemRecord record) {
-    // 1. 兒科模式
+    if (widget.type == ScaleType.bp_log) {
+      return "${record.systolic ?? '-'}/${record.diastolic ?? '-'} ${widget.unit}";
+    }
     if (widget.type == ScaleType.growth) {
-      if (widget.unit == "kg") {
-        return "${record.weight?.toStringAsFixed(1) ?? '0'} kg";
-      } else {
-        // 優先顯示身高，沒身高顯頭圍
-        final double val = record.height ?? record.headCircumference ?? 0;
-        return "${val.toInt()} cm";
-      }
+      if (widget.unit == "kg") return "${record.weight?.toStringAsFixed(1) ?? '0'} kg";
+      final double val = record.height ?? record.headCircumference ?? 0;
+      return "${val.toInt()} cm";
     }
-
-    // 2. 風濕科 HAQ (通常有小數點)
-    if (widget.type == ScaleType.haq) {
-      return "${record.score?.toStringAsFixed(1) ?? '0'} ${widget.unit}";
-    }
-
-    // 3. 一般量表與腸胃科 (取整數)
+    if (widget.type == ScaleType.bristol) return "第 ${record.score?.toInt() ?? '0'} 型";
+    if (widget.type == ScaleType.haq) return "${record.score?.toStringAsFixed(1) ?? '0'} ${widget.unit}";
     return "${record.score?.toInt() ?? '0'} ${widget.unit}";
   }
 
-
   String _getTimeString(PoemRecord record, DateTime weekStartDate) {
     final DateTime fillDate = record.date!;
-    final bool isLateFill = fillDate.difference(weekStartDate).inDays >= 7;
-
-    if (isLateFill) {
-      return "補 ${DateFormat('M/d').format(fillDate)}\n${DateFormat('HH:mm').format(fillDate)}";
-    } else {
-      return DateFormat('HH:mm').format(fillDate);
-    }
+    return fillDate.difference(weekStartDate).inDays >= 7
+        ? "補 ${DateFormat('M/d').format(fillDate)}"
+        : DateFormat('HH:mm').format(fillDate);
   }
-
 
   Widget _buildDateSquare(DateTime date, bool isDone, bool isToday, bool canFill, Color color, PoemRecord? record) {
     return InkWell(
       onTap: () async {
-        bool? needsRefresh;
-        if (isDone) {
-          HapticFeedback.lightImpact();
-          needsRefresh = await Navigator.push<bool>(
-              context,
-              MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: widget.type, oldRecord: record))
-          );
-        } else if (canFill || isToday) {
-          HapticFeedback.mediumImpact();
-          HapticFeedback.lightImpact();
-          needsRefresh = await Navigator.push<bool>(
-              context,
-              MaterialPageRoute(builder: (context) => PoemSurveyScreen(initialType: widget.type, targetDate: date))
-          );
-        }
-
-        if (needsRefresh == true && mounted) {
-          widget.onRefresh?.call();
-          setState(() {});
-        }
+        bool? res = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(builder: (context) => PoemSurveyScreen(
+              initialType: widget.type,
+              oldRecord: isDone ? record : null,
+              targetDate: isDone ? null : date,
+            ))
+        );
+        if (res == true) widget.onRefresh?.call();
       },
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
         width: 52, height: 52,
         decoration: BoxDecoration(
           color: isToday ? Colors.white : (isDone ? color.withOpacity(0.05) : Colors.grey.shade50),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: (isDone || isToday) ? color : (canFill ? Colors.orange.shade300 : Colors.grey.shade300), width: 2.5),
         ),
         child: Stack(
@@ -346,18 +276,19 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
           children: [
             Text(DateFormat('dd').format(date), style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: (isDone || isToday) ? color : (canFill ? Colors.orange.shade800 : Colors.grey.shade700))),
             if (isDone) Positioned(right: 2, top: 2, child: Icon(Icons.check_circle, color: color, size: 16)),
-            if (canFill && !isToday) Positioned(right: 2, top: 2, child: Icon(Icons.add_circle_outline, color: Colors.orange.shade300, size: 14)),
           ],
         ),
       ),
     );
   }
 
-// ✅ 修改後：直接連動你在首頁改好的親民標題
   String _getScaleTitle(ScaleType t) {
-    return ScaleConfig.allScales[t]?.title ?? "量表紀錄";
+    if (t == ScaleType.bp_log) return "血壓紀錄";
+    if (t == ScaleType.growth) return "生長數據";
+    if (t == ScaleType.ess) return "ESS";
+    return t.name.toUpperCase();
   }
-// ✅ 修改後：
+
   Color _getScaleColor(ScaleType t) {
     return ScaleConfig.allScales[t]?.color ?? Colors.blueGrey;
   }

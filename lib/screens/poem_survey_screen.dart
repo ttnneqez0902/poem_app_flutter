@@ -221,7 +221,8 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
       // --- 3. 儲存與觸發背景同步 ---
       await isarService.saveRecord(record);
 
-      syncRecordsOptimized().catchError((e) => debugPrint("☁️ 背景同步延遲: $e"));
+      // 🔥 1. 標記有新資料
+      hasPendingSync = true;
 
       if (mounted) {
         HapticFeedback.heavyImpact();

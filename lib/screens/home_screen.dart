@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'poem_survey_screen.dart';
 import 'trend_chart_screen.dart';
 import 'history_list_screen.dart';
@@ -29,7 +30,6 @@ import '../services/backup_error_dialog.dart';
 import '../services/notification_service.dart';
 import '../models/scale_config.dart';
 
-
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -37,7 +37,10 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+
 class _HomeScreenState extends State<HomeScreen> {
+  // ✅ 放在這裡（正確位置）
+  Timer? _suggestTimer;
   // --- 核心狀態與配置 ---
   AppCategory _currentCategory = AppCategory.dermatology;
   final String _appVersion = "1.0.0";
@@ -50,6 +53,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isBoy = true;             // 🚀 2. 補上這個漏掉的性別變數
   DateTime? _childBirthday;
   DateTime? _childDueDate; // 🚀 新增這行：預產期
+  Map<AppCategory, DateTime?> _lastCompletionTimes = {};
+
+// 🚀 根據量表類型找出它所屬的科別
+  AppCategory _getCategoryFromScale(ScaleType type) {
+    for (var category in AppCategory.values) {
+      if (_isScaleInCategory(type, category)) return category;
+    }
+    return AppCategory.dermatology; // 找不到時的預設值
+  }
 
   late final PageController _pageController = PageController(
     initialPage: _virtualInitialPage,
@@ -103,6 +115,34 @@ class _HomeScreenState extends State<HomeScreen> {
     googleSignIn: _googleSignIn,
     onDbSwapped: (newIsar) => isarService.updateInstance(newIsar),
   );
+
+  String _formatClinicalDate(DateTime? dateTime) {
+    if (dateTime == null) return "";
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final recordDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+    final int diffDays = today.difference(recordDate).inDays;
+
+    const weekDays = ["", "週一", "週二", "週三", "週四", "週五", "週六", "週日"];
+
+    if (diffDays == 0) return " (今天)";
+    if (diffDays == 1) return " (昨天)";
+    if (diffDays == 2) return " (前天)";
+
+    // 3 ~ 6 天內：顯示「週幾」
+    if (diffDays < 7) {
+      return " (${weekDays[recordDate.weekday]})";
+    }
+
+    // 7 ~ 13 天內：顯示「上週幾」
+    if (diffDays < 14) {
+      return " (上${weekDays[recordDate.weekday]})";
+    }
+
+    // 更久以前：標日期 MM/dd
+    return " (${DateFormat('MM/dd').format(dateTime)})";
+  }
 
   // --- 科別內容配置表 (親民圖示版) ---
   Map<AppCategory, List<Map<String, dynamic>>> get _categoryConfigs => {
@@ -198,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollController.dispose();
     _bannerAd?.dispose();
     _interstitialAd?.dispose(); // 🚀 記得釋放插頁廣告
+    _suggestTimer?.cancel(); // 🚀 防 memory leak
     super.dispose();
   }
 
@@ -346,26 +387,50 @@ class _HomeScreenState extends State<HomeScreen> {
   // 🚀 2. 修正：讀取最後一次使用的科別
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+
     setState(() {
       for (var type in ScaleType.values) {
-        _enabledScales[type] = prefs.getBool('enable_${type.name}') ?? true;
-        _reminderEnabled[type] = prefs.getBool('reminder_enabled_${type.name}') ?? true;
-        _reminderDays[type] = prefs.getInt('reminder_day_${type.name}') ?? DateTime.sunday;
+        _enabledScales[type] =
+            prefs.getBool('enable_${type.name}') ?? true;
+
+        // ✅ 預設關閉提醒（正確）
+        _reminderEnabled[type] =
+            prefs.getBool('reminder_enabled_${type.name}') ?? false;
+
+        _reminderDays[type] =
+            prefs.getInt('reminder_day_${type.name}') ?? DateTime.sunday;
+
         final h = prefs.getInt('reminder_hour_${type.name}') ?? 20;
         final m = prefs.getInt('reminder_minute_${type.name}') ?? 0;
         _reminderTimes[type] = TimeOfDay(hour: h, minute: m);
       }
+
+      // 各科別最後時間
+      for (var cat in AppCategory.values) {
+        final timeStr = prefs.getString('last_time_${cat.name}');
+        if (timeStr != null) {
+          _lastCompletionTimes[cat] = DateTime.parse(timeStr);
+        }
+      }
+
       _isBoy = prefs.getBool('child_is_boy') ?? true;
+
       final bStr = prefs.getString('child_birthday');
       if (bStr != null) _childBirthday = DateTime.parse(bStr);
-      final dStr = prefs.getString('child_due_date'); // 補回預產期
+
+      final dStr = prefs.getString('child_due_date');
       if (dStr != null) _childDueDate = DateTime.parse(dStr);
 
-      // 關鍵：讀取記憶的科別
-      final catIdx = prefs.getInt('last_category_index') ?? AppCategory.dermatology.index;
+      final catIdx =
+          prefs.getInt('last_category_index') ?? AppCategory.dermatology.index;
+
       _currentCategory = AppCategory.values[catIdx];
     });
-    _scheduleClinicalReminders();
+
+    // 🚀 優化：只有有開提醒才排程
+    if (_reminderEnabled.values.any((e) => e == true)) {
+      _scheduleClinicalReminders();
+    }
   }
 
   Future<void> _saveSettings() async {
@@ -725,13 +790,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 🚀 3. 修正：記憶切換的科別
   Widget _buildTitleSelector(User? user, bool isDark) {
-    // 🚀 關鍵修正：在這裡補上缺失的分類，並按照你想要的順序排列
     final Map<AppCategory, String> catNames = {
       AppCategory.dermatology: "肌膚照護",
-      AppCategory.sleep: "睡眠健康",      // 👈 補上這行
-      AppCategory.chronic: "慢性病管理",  // 👈 補上這行
+      AppCategory.sleep: "睡眠健康",
+      AppCategory.chronic: "慢性病管理",
       AppCategory.psychiatry: "情緒照護",
       AppCategory.pain: "疼痛管理",
       AppCategory.rheumatology: "風濕免疫",
@@ -740,6 +803,15 @@ class _HomeScreenState extends State<HomeScreen> {
       AppCategory.peds: "兒科發展",
     };
 
+    // 🚀 核心排序邏輯：複製一份清單來排序，不破壞原本的 AppCategory.values
+    List<AppCategory> sortedCategories = AppCategory.values.toList();
+    sortedCategories.sort((a, b) {
+      // 取得時間，若沒填過就給一個遠古時代的日期 (2000年) 讓它墊底
+      DateTime timeA = _lastCompletionTimes[a] ?? DateTime(2000);
+      DateTime timeB = _lastCompletionTimes[b] ?? DateTime(2000);
+      return timeB.compareTo(timeA); // 最新時間排在最上面 (降冪)
+    });
+
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.only(top: 15.0),
@@ -747,16 +819,45 @@ class _HomeScreenState extends State<HomeScreen> {
           onSelected: (cat) async {
             setState(() {
               _currentCategory = cat;
-              _pageController.jumpToPage(_virtualInitialPage);
+              if (_pageController.hasClients) _pageController.jumpToPage(_virtualInitialPage);
             });
             final prefs = await SharedPreferences.getInstance();
             await prefs.setInt('last_category_index', cat.index);
             HapticFeedback.mediumImpact();
           },
-          // 這裡會自動根據上面的 catNames 生成選單項目
-          itemBuilder: (ctx) => catNames.entries
-              .map((e) => PopupMenuItem(value: e.key, child: Text(e.value)))
-              .toList(),
+          itemBuilder: (ctx) => sortedCategories.map((cat) {
+            // 1. 取得該科別的人性化日期註記 (如： (今天), (上週一))
+            final String dateNote = _formatClinicalDate(_lastCompletionTimes[cat]);
+
+            return PopupMenuItem(
+              value: cat,
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    // 科別名稱
+                    TextSpan(
+                      text: catNames[cat]!,
+                      style: TextStyle(
+                        // 當前選中的科別加粗變色
+                        fontWeight: _currentCategory == cat ? FontWeight.bold : FontWeight.normal,
+                        color: _currentCategory == cat ? Colors.blue.shade700 : (isDark ? Colors.white : Colors.black87),
+                        fontSize: 16,
+                      ),
+                    ),
+                    // 🚀 括號日期註記 (縮小並變灰，產生視覺層次)
+                    TextSpan(
+                      text: dateNote,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.white54 : Colors.grey.shade500,
+                        fontWeight: FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -772,7 +873,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Icon(Icons.arrow_drop_down, color: isDark ? Colors.white70 : Colors.grey),
               ]),
               if (user?.email != null)
-                Text(user!.email!, style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.grey.shade600)),
+                Text(user!.email!, style: TextStyle(fontSize: 11, color: isDark ? Colors.white70 : Colors.grey.shade600)),
             ],
           ),
         ),
@@ -859,31 +960,83 @@ class _HomeScreenState extends State<HomeScreen> {
               }
 
               // 🚀 4. 進入問卷邏輯
+              // 🚀 4. 進入問卷邏輯
               if (targetType is ScaleType) {
-                debugPrint("🚀 準備進入問卷，傳入類型：$targetType"); // 加上這行 Debug
-                // 💡 這裡最關鍵：確保傳入的是 targetType，這樣存檔才不會變成 ScaleType.poem
                 final res = await Navigator.push<bool>(
                     context,
-                    MaterialPageRoute(
-                      // 🚀 關鍵修正 2：這裡一定要傳 targetType
-                        builder: (ctx) => PoemSurveyScreen(initialType: targetType)
-                    )
+                    MaterialPageRoute(builder: (ctx) => PoemSurveyScreen(initialType: targetType))
                 );
 
+                // 🎯 當問卷成功儲存並返回時
                 if (res == true && mounted) {
-                  _showInterstitialAd();
-                  _refreshData();
-                  _checkAndSilentBackup();
+                  final now = DateTime.now();
 
-                  // 皮膚科特殊邏輯：自動跳轉到對應的圖表卡片
-                  if (_currentCategory == AppCategory.dermatology) {
+                  await _recordUsage(targetType, now);
+
+                  final targetCategory = _getCategoryFromScale(targetType);
+                  final prefs = await SharedPreferences.getInstance();
+
+                  // 🚀 只有第一次才設定提醒時間（避免覆蓋使用者設定）
+                  final hasCustomTime =
+                  prefs.containsKey('reminder_hour_${targetType.name}');
+
+                  if (!hasCustomTime) {
+                    final nowTime = TimeOfDay.now();
+
+                    setState(() {
+                      _reminderTimes[targetType] = nowTime;
+                    });
+
+                    await prefs.setInt(
+                      'reminder_hour_${targetType.name}',
+                      nowTime.hour,
+                    );
+
+                    await prefs.setInt(
+                      'reminder_minute_${targetType.name}',
+                      nowTime.minute,
+                    );
+                  }
+
+                  // 1. 💾 永久儲存最後紀錄時間
+                  await prefs.setString('last_time_${targetCategory.name}', now.toIso8601String());
+
+                  setState(() {
+                    // 2. 更新 UI
+                    _currentCategory = targetCategory;
+                    _lastCompletionTimes[targetCategory] = now;
+
+                    if (_pageController.hasClients) {
+                      _pageController.jumpToPage(_virtualInitialPage);
+                    }
+                  });
+
+                  // 3. 記憶最後科別
+                  await prefs.setInt('last_category_index', targetCategory.index);
+
+                  // 🚀 4. 新增：詢問提醒（核心）
+                  final isReminderOn =
+                      prefs.getBool('reminder_enabled_${targetType.name}') ?? false;
+
+                  final hasAsked =
+                      prefs.getBool('asked_reminder_${targetType.name}') ?? false;
+
+                  if (!isReminderOn && !hasAsked) {
+                    // 記錄已詢問（避免一直問）
+                    await prefs.setBool('asked_reminder_${targetType.name}', true);
+
+                    // 延遲一點避免卡 UI
                     Future.delayed(const Duration(milliseconds: 300), () {
-                      if (mounted) _jumpToScalePage(targetType);
+                      _askEnableReminder(targetType);
                     });
                   }
+
+                  // 5. 原本流程
+                  _refreshData();
+                  _showInterstitialAd();
+                  _checkAndSilentBackup();
                 }
               } else {
-                // 如果 type 不是 ScaleType (例如是自訂 Function)，可以在這裡處理
                 if (config['onTap'] != null) config['onTap']();
               }
             },
@@ -892,6 +1045,208 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       ),
     );
+  }
+
+  void _askEnableReminder(ScaleType type) {
+    final title = ScaleConfig.allScales[type]?.title ?? type.name;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("需要提醒嗎？"),
+        content: Text("之後可以提醒您完成「$title」紀錄"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("不用"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('reminder_enabled_${type.name}', true);
+
+              setState(() {
+                _reminderEnabled[type] = true;
+              });
+
+              await _scheduleClinicalReminders();
+
+              Navigator.pop(ctx);
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("$title 提醒已開啟")),
+              );
+            },
+            child: const Text("開啟提醒"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _recordUsage(ScaleType type, DateTime time) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final key = 'usage_${type.name}';
+    final list = prefs.getStringList(key) ?? [];
+
+    // 存成 ISO string
+    list.add(time.toIso8601String());
+
+    // 👉 限制最多保留 20 筆（避免爆）
+    if (list.length > 20) {
+      list.removeAt(0);
+    }
+
+    await prefs.setStringList(key, list);
+
+    // 🔥 記完就嘗試學習
+    await _analyzeAndAdjustReminder(type, list);
+  }
+
+  Future<void> _analyzeAndAdjustReminder(
+      ScaleType type,
+      List<String> rawList,
+      ) async {
+    if (rawList.length < 5) return;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // 🚀 使用者已手動調整 → 永遠不再提示
+    final userAdjusted =
+        prefs.getBool('user_adjusted_${type.name}') ?? false;
+    if (userAdjusted) return;
+
+    final times = rawList.map((e) => DateTime.parse(e)).toList();
+
+    final Map<int, int> hourCount = {};
+    final Map<int, int> weekdayCount = {};
+
+    for (var t in times) {
+      hourCount[t.hour] = (hourCount[t.hour] ?? 0) + 1;
+      weekdayCount[t.weekday] = (weekdayCount[t.weekday] ?? 0) + 1;
+    }
+
+    int bestHour =
+        hourCount.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+
+    int bestDay =
+        weekdayCount.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+
+    if (hourCount[bestHour]! < 3) return;
+    if (weekdayCount[bestDay]! < 3) return;
+
+    final currentHour =
+    prefs.getInt('reminder_hour_${type.name}');
+    final currentDay =
+    prefs.getInt('reminder_day_${type.name}');
+
+    if (currentHour != null &&
+        currentDay != null &&
+        (currentHour - bestHour).abs() <= 1 &&
+        currentDay == bestDay) {
+      return;
+    }
+
+    // 🚀 冷卻機制
+    final rejectCount =
+        prefs.getInt('reject_count_${type.name}') ?? 0;
+
+// 👉 拒絕2次 → 永遠不再提示
+    if (rejectCount >= 2) return;
+
+    int cooldownDays = rejectCount == 0 ? 14 : 28;
+
+    final lastSuggestTime =
+    prefs.getString('last_suggest_${type.name}');
+
+    if (lastSuggestTime != null) {
+      final last = DateTime.parse(lastSuggestTime);
+      if (DateTime.now().difference(last).inDays < cooldownDays) {
+        return;
+      }
+    }
+
+    if (!mounted) return;
+
+    final period = _getTimePeriod(bestHour);
+    final title = ScaleConfig.allScales[type]?.title ?? "";
+
+    bool userInteracted = false;
+
+// ⏱ 3秒後才算「拒絕」
+    _suggestTimer?.cancel();
+
+    _suggestTimer = Timer(const Duration(seconds: 3), () async {
+      if (!mounted) return;
+      if (userInteracted) return;
+
+      final prefs = await SharedPreferences.getInstance();
+
+      await prefs.setString(
+        'last_suggest_${type.name}',
+        DateTime.now().toIso8601String(),
+      );
+
+      final rejectCount =
+          prefs.getInt('reject_count_${type.name}') ?? 0;
+
+      await prefs.setInt(
+        'reject_count_${type.name}',
+        rejectCount + 1,
+      );
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+
+    messenger.clearSnackBars();
+
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(
+          "你最近都在$period記錄「$title」，要幫你之後在這個時候提醒嗎？",
+        ),
+        action: SnackBarAction(
+          label: "調整",
+          onPressed: () async {
+            userInteracted = true;
+
+            _suggestTimer?.cancel(); // 🔥 這行要加
+
+            final prefs = await SharedPreferences.getInstance();
+
+            await prefs.setInt(
+                'reminder_hour_${type.name}', bestHour);
+            await prefs.setInt(
+                'reminder_day_${type.name}', bestDay);
+
+            await prefs.setBool(
+                'user_adjusted_${type.name}', true);
+
+            setState(() {
+              _reminderTimes[type] =
+                  TimeOfDay(hour: bestHour, minute: 0);
+              _reminderDays[type] = bestDay;
+            });
+
+            await _scheduleClinicalReminders();
+
+            messenger.showSnackBar(
+              const SnackBar(content: Text("提醒時間已更新")),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _getTimePeriod(int hour) {
+    if (hour >= 6 && hour < 11) return "早上";
+    if (hour >= 11 && hour < 14) return "中午";
+    if (hour >= 14 && hour < 18) return "下午";
+    if (hour >= 18 && hour < 22) return "晚上";
+    return "深夜";
   }
 
   // 🚀 新增一個輔助方法計算年齡

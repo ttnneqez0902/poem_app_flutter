@@ -160,14 +160,49 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
   Widget _buildHeader(String title, Color color, bool isCompleted) {
     final lastRecord = widget.history.isNotEmpty ? widget.history.first : null;
 
+    // 🚀 1. 定義簡短主標題 (例如 ADCT, POEM, 血壓)
+    String mainTitle = "";
+    switch (widget.type) {
+      case ScaleType.bp_log: mainTitle = "血壓"; break;
+      case ScaleType.growth: mainTitle = "生長"; break;
+      case ScaleType.cycle:  mainTitle = "週期"; break;
+      case ScaleType.bristol: mainTitle = "腸胃"; break;
+      default:
+      // 這裡會把 enum 名字轉成大寫，如 ScaleType.adct -> ADCT
+        mainTitle = widget.type.name.toUpperCase();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 🚀 請修改 lib/widgets/weekly_tracker_card.dart 中的這一段
+        // 🚀 2. 第一行：只顯示簡短主標題 + 完成勾勾 (對齊 UAS7 風格)
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 1. 👈 將任務狀態文字包在 Expanded 裡面
+            Expanded(
+              child: Text(
+                mainTitle,
+                style: TextStyle(
+                  fontSize: 20,           // 👈 加大字體，增加權重
+                  fontWeight: FontWeight.w900,
+                  color: isCompleted ? color : Colors.blueGrey.shade800,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (isCompleted)
+              Icon(Icons.check_circle, color: color, size: 22),
+          ],
+        ),
+
+        const SizedBox(height: 10), // 縮小間距，讓視覺更緊湊
+
+        // 🚀 3. 第二行：任務狀態文字 + 最新數值膠囊
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // 任務狀態文字
             Expanded(
               child: Text(
                 isCompleted ? "🎉 周任務已完成" : "🔔 周任務未完成",
@@ -176,15 +211,14 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                     fontWeight: FontWeight.bold,
                     color: isCompleted ? Colors.green : Colors.orange.shade800
                 ),
-                maxLines: 1, // 🚀 確保不換行
-                overflow: TextOverflow.ellipsis, // 🚀 超過寬度時顯示 ...
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
 
-            // 2. 🚀 增加一個微小的間距，避免文字跟膠囊貼在一起
             const SizedBox(width: 8),
 
-            // 3. 最新數值膠囊 (保持不變)
+            // 最新數值顯示 (例如：最新：9 分)
             if (lastRecord != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -195,7 +229,7 @@ class _WeeklyTrackerCardState extends State<WeeklyTrackerCard> {
                 child: Text(
                   "最新：${_formatLastValue(lastRecord)}",
                   style: TextStyle(
-                      fontSize: 12, // 🚀 稍微調小一點點（從 13 降到 12），血壓數值比較長
+                      fontSize: 12,
                       fontWeight: FontWeight.w900,
                       color: color
                   ),

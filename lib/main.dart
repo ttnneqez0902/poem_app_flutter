@@ -3,8 +3,11 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:flutter/services.dart'; // 🚀 必加：處理系統 UI
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'dart:io';
+import 'dart:async'; // 🔥 加這行
 
 import 'firebase_options.dart';
 import 'controllers/bootstrap_controller.dart';
@@ -29,7 +32,10 @@ final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<ScaffoldMessengerState> messengerKey = GlobalKey<ScaffoldMessengerState>();
 
+bool hasPendingSync = false;
+bool _hasTriggeredSync = false;
 String? pendingPayload;
+
 
 void handleNotificationJump(String payload) {
   // 🚀 Defensive Coding: 確保 Enum 解析永遠安全
@@ -55,26 +61,44 @@ void handleNotificationJump(String payload) {
 }
 
 
+StreamSubscription<User?>? _authSub;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🚀 1. 取得系統當前亮度，確保啟動畫面的狀態列顏色正確
-  final Brightness systemBrightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+  // 🌗 系統亮度
+  final Brightness systemBrightness =
+      WidgetsBinding.instance.platformDispatcher.platformBrightness;
   final bool isDarkMode = systemBrightness == Brightness.dark;
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-  // 🚀 修正這裡：使用剛剛抓到的 isDarkMode
   SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
-    statusBarIconBrightness: isDarkMode ? Brightness.light : Brightness.dark,
-    systemNavigationBarColor: isDarkMode ? const Color(0xFF121212) : Colors.white,
-    systemNavigationBarIconBrightness: isDarkMode ? Brightness.light : Brightness.dark,
+    statusBarIconBrightness:
+    isDarkMode ? Brightness.light : Brightness.dark,
+    systemNavigationBarColor:
+    isDarkMode ? const Color(0xFF121212) : Colors.white,
+    systemNavigationBarIconBrightness:
+    isDarkMode ? Brightness.light : Brightness.dark,
   ));
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // 🔥 Firebase 初始化
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  // 🔥 正確位置：這裡才監聽 auth
+  _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+    if (user == null) {
+      _hasTriggeredSync = false;
+    }
+  });
+
   WidgetsBinding.instance.addObserver(appLifecycleHandler);
+
   await _initServices();
+
   runApp(const MyApp());
 }
 
@@ -111,10 +135,16 @@ Future<void> globalSyncTask({bool force = false}) async {
   final user = FirebaseAuth.instance.currentUser;
   if (user == null) return;
 
-  // 1. 🚀 節流鎖 (如果非強制同步，則受 2 分鐘限制)
+  // 🔥 沒新資料 → 不 sync
+  if (!force && !hasPendingSync) {
+    debugPrint("📭 [Sync Skip] 沒有新資料");
+    return;
+  }
+
+  // 🔥 節流（30分鐘）
   if (!force && _lastSync != null &&
-      DateTime.now().difference(_lastSync!) < const Duration(minutes: 2)) {
-    debugPrint("⏳ [Sync Skip] 距離上次同步不到 2 分鐘，跳過。");
+      DateTime.now().difference(_lastSync!) < const Duration(minutes: 30)) {
+    debugPrint("⏳ [Sync Skip] 距離上次同步不到 30 分鐘，跳過。");
     return;
   }
 
@@ -124,35 +154,39 @@ Future<void> globalSyncTask({bool force = false}) async {
   try {
     debugPrint("📡 [Sync Start] 正在上傳臨床數據...");
 
-    // 2. 🚀 執行同步
     final result = await syncManager.performPushSync();
 
-    // 3. 🚀 增加使用者感知的回饋 (UX)
+    // 🔥 成功
     if (result.success > 0) {
       debugPrint("🏁 [Sync Success] 成功同步 ${result.success} 筆資料");
 
-      // 💡 如果有註冊 messengerKey，可以跳一個簡單的提示
-      messengerKey.currentState?.showSnackBar(
-        SnackBar(
-          content: Text("✅ 已安全同步 ${result.success} 筆紀錄至雲端"),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-          backgroundColor: Colors.green.shade700,
-        ),
-      );
+      hasPendingSync = false; // 🔥 核心
+
+      if (force) {
+        messengerKey.currentState?.showSnackBar(
+          SnackBar(
+            content: Text("✅ 已安全同步 ${result.success} 筆紀錄至雲端"),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+
+      // ⚠️ 部分失敗
     } else if (result.total > 0 && result.failed > 0) {
       debugPrint("⚠️ [Sync Partial] 部分失敗：${result.failed} 筆");
+
+      // 📭 沒東西同步
     } else {
       debugPrint("📭 [Sync Skip] 無需同步新數據");
     }
 
-    // ✅ 全部執行完畢且沒拋出異常，才更新「最後同步時間」
     _lastSync = DateTime.now();
 
   } catch (e) {
     debugPrint("⚠️ [Sync Failed] 網路或權限異常: $e");
 
-    // 如果是強制同步卻失敗，提示使用者
     if (force) {
       messengerKey.currentState?.showSnackBar(
         const SnackBar(content: Text("❌ 同步失敗，請檢查網路連線")),
@@ -167,9 +201,19 @@ class AppLifecycleHandler extends WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      debugPrint("📱 [Lifecycle] App Resumed - 1s 緩衝後觸發同步");
-      // 🚀 關鍵優化：給予 1 秒緩衝，確保 Socket 穩定與 UI 渲染完畢
-      Future.delayed(const Duration(seconds: 1), () => globalSyncTask());
+      _handleResume();
+    }
+  }
+
+  Future<void> _handleResume() async {
+    final prefs = await SharedPreferences.getInstance();
+    final autoSync = prefs.getBool('auto_sync') ?? false;
+
+    if (autoSync) {
+      Future.delayed(
+        const Duration(seconds: 1),
+            () => globalSyncTask(),
+      );
     }
   }
 }
@@ -315,30 +359,55 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
 /// 🔒 權限門衛：處理 Firebase 登入狀態
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
+
+        // 🚀 1️⃣ 初始化時（避免閃屏）
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
         }
 
+        // 🚀 2️⃣ 已登入
         if (snapshot.hasData) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            debugPrint("🔐 [Auth] 使用者登入成功 - 啟動首波同步");
-            globalSyncTask();
 
-            // 🚀 處理冷啟動通知
-            if (pendingPayload != null) {
-              handleNotificationJump(pendingPayload!);
-              pendingPayload = null;
-            }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _handleAutoSyncOnce();
           });
+
           return const HomeScreen();
         }
+
+        // 🚀 3️⃣ 未登入
         return const LoginScreen();
       },
     );
+  }
+
+  // 🔥 把副作用抽出去（更乾淨）
+  void _handleAutoSyncOnce() {
+    if (_hasTriggeredSync) return;
+
+    _hasTriggeredSync = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final autoSync = prefs.getBool('auto_sync') ?? false;
+
+      if (autoSync) {
+        globalSyncTask();
+      }
+    });
   }
 }

@@ -43,28 +43,23 @@ class _LoginScreenState extends State<LoginScreen> {
   // 2. Google 登入 (優化版)
   // ============================
   Future<void> _signInWithGoogle() async {
-    _setLoading(true);
     try {
-      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) {
-        if (mounted) _setLoading(false);
-        return; // 使用者取消登入
-      }
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return;
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final googleAuth = await googleUser.authentication;
 
-      final OAuthCredential credential = GoogleAuthProvider.credential(
+      final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
       await FirebaseAuth.instance.signInWithCredential(credential);
+
     } on FirebaseAuthException catch (e) {
       _showErrorDialog("Google 登入失敗", e.message ?? "請檢查網路或帳號設定");
     } catch (e) {
       _showErrorDialog("登入中斷", "無法完成 Google 登入: $e");
-    } finally {
-      if (mounted) _setLoading(false);
     }
   }
 
@@ -280,8 +275,8 @@ class _LoginScreenState extends State<LoginScreen> {
       child: ElevatedButton(
         onPressed: () {
           HapticFeedback.lightImpact();
-          onPressed();
-        },
+          onPressed(); // ✅ 不用 await
+        }, // ✅ 記得這個逗號
         style: ElevatedButton.styleFrom(
           backgroundColor: backgroundColor,
           foregroundColor: textColor,

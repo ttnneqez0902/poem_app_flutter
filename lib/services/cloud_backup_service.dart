@@ -30,11 +30,19 @@ class BackupMetadata {
   final int schemaVersion;
   final String provider;
 
+  // 🚀 新增
+  final int recordCount;
+  final int backupSize;
+
   BackupMetadata({
     required this.createdAt,
     required this.appVersion,
-    this.schemaVersion = 2,
+    this.schemaVersion = 1,
     required this.provider,
+
+    // 🚀 新增
+    required this.recordCount,
+    required this.backupSize,
   });
 
   Map<String, dynamic> toJson() => {
@@ -42,14 +50,50 @@ class BackupMetadata {
     'appVersion': appVersion,
     'schemaVersion': schemaVersion,
     'provider': provider,
+    'recordCount': recordCount,
+    'backupSize': backupSize,
   };
 
-  factory BackupMetadata.fromJson(Map<String, dynamic> json) => BackupMetadata(
-    createdAt: DateTime.parse(json['createdAt']),
-    appVersion: json['appVersion'] ?? 'unknown',
-    schemaVersion: json['schemaVersion'] ?? 2,
-    provider: json['provider'] ?? 'unknown',
-  );
+
+  factory BackupMetadata.fromJson(
+      Map<String, dynamic> json,
+      ) =>
+      BackupMetadata(
+        createdAt:
+        DateTime.parse(json['createdAt']),
+
+        appVersion:
+        json['appVersion'] ?? 'unknown',
+
+        schemaVersion:
+        (json['schemaVersion'] as num?)
+            ?.toInt() ?? 1,
+
+        provider:
+        json['provider'] ?? 'unknown',
+
+        recordCount:
+        (json['recordCount'] as num?)
+            ?.toInt() ?? 0,
+
+        backupSize:
+        (json['backupSize'] as num?)
+            ?.toInt() ?? 0,
+      );
+
+  // 🚀 人類可讀檔案大小
+  String get readableBackupSize {
+
+    final mb = backupSize / 1024 / 1024;
+
+    if (mb >= 1) {
+      return "${mb.toStringAsFixed(1)} MB";
+    }
+
+    final kb = backupSize / 1024;
+
+    return "${kb.toStringAsFixed(0)} KB";
+  }
 }
 
 enum BackupExceptionType { network, permission, storage, incomplete, unknown }
@@ -137,6 +181,22 @@ class CloudBackupService {
 
       await isar.copyToFile(dbBackupFile.path);
 
+// 🚀 新增 debug
+      final recordCount =
+      await isar.poemRecords.count();
+
+      debugPrint(
+          "🚀 backup local record count=$recordCount"
+      );
+
+      debugPrint(
+          "🚀 backup file exists=${await dbBackupFile.exists()}"
+      );
+
+      debugPrint(
+          "🚀 backup file size=${await dbBackupFile.length()}"
+      );
+
       final List<File> photos = [];
 
       final photoDir = Directory(photoDirPath);
@@ -154,6 +214,9 @@ class CloudBackupService {
         appVersion: appVersion,
         schemaVersion: currentSchemaVersion,
         provider: provider.name,
+        recordCount: await isar.poemRecords.count(),
+
+        backupSize: await dbBackupFile.length(),
       );
 
       switch (provider) {
@@ -250,6 +313,32 @@ class CloudBackupService {
       await _verifyRestoredDatabase(tempDbPath);
       await _hotSwapDatabase(tempDbPath);
 
+      isar = await isarFactory();
+// 🚀 restore 後重新綁定目前登入帳號
+      final currentUid =
+          FirebaseAuth.instance.currentUser?.uid;
+
+      if (currentUid != null) {
+
+        await isar.writeTxn(() async {
+
+          final allRecords =
+          await isar.poemRecords.where().findAll();
+
+          debugPrint("🚀 restore records count=${allRecords.length}");
+
+
+          for (final r in allRecords) {
+            r.userId = currentUid;
+            r.updatedAt = DateTime.now();
+            r.syncStatus = SyncStatus.pending;
+            r.isSynced = false;
+          }
+
+          await isar.poemRecords.putAll(allRecords);
+        });
+      }
+
       final backupDir = Directory("${photoDirPath}_backup");
       if (await backupDir.exists()) await backupDir.delete(recursive: true);
 
@@ -320,6 +409,7 @@ class CloudBackupService {
 
       await _uploadToDriveRaw(api, _metaFileName, utf8.encode(jsonEncode(meta.toJson())), 'application/json');
       await _deleteFromDriveIfExists(api, _progressFlag);
+      debugPrint("🚀 backup upload finished");
     } finally {
       authClient.close();
     }
@@ -624,7 +714,17 @@ class CloudBackupService {
       final list = await api.files.list(q: "name = '$_metaFileName' and 'appDataFolder' in parents", spaces: 'appDataFolder');
       if (list.files == null || list.files!.isEmpty) return null;
       final res = await api.files.get(list.files!.first.id!, downloadOptions: drive.DownloadOptions.fullMedia) as drive.Media;
-      return BackupMetadata.fromJson(jsonDecode(utf8.decode(await _readMediaBytes(res))));
+      final jsonMap = jsonDecode(
+        utf8.decode(
+          await _readMediaBytes(res),
+        ),
+      );
+
+      debugPrint(
+        "🚀 preview json=$jsonMap",
+      );
+
+      return BackupMetadata.fromJson(jsonMap);
     } catch (_) {
       return null;
     } finally {

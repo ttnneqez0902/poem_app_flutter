@@ -689,7 +689,73 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleRestore() async {
-    final bool confirmed = await BackupDialogs.confirmRestore(context);
+    final meta = await cloudBackupService.getBackupPreview();
+
+    bool confirmed = false;
+
+    if (meta != null) {
+
+      confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+
+          return AlertDialog(
+
+            title: const Text("☁️ 最近備份"),
+
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+
+                Text(
+                  "時間：${DateFormat('yyyy/MM/dd HH:mm').format(meta.createdAt)}",
+                ),
+
+                const SizedBox(height: 10),
+
+                Text(
+                  "紀錄數：${meta.recordCount} 筆",
+                ),
+
+                Text(
+                  "大小：${meta.readableBackupSize}",
+                ),
+
+                Text(
+                  "版本：${meta.appVersion}",
+                ),
+              ],
+            ),
+
+            actions: [
+
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx, false);
+                },
+                child: const Text("取消"),
+              ),
+
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx, true);
+                },
+                child: const Text("開始還原"),
+              ),
+            ],
+          );
+        },
+      ) ?? false;
+
+    } else {
+
+      confirmed =
+      await BackupDialogs.confirmRestore(
+        context,
+      );
+    }
     if (!confirmed) return;
     setState(() => _isSyncing = true);
     try {
@@ -706,7 +772,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   prog.value = p.message;
                   per.value = p.progress;
                 });
-            if (mounted) _refreshData();
+            // 🚀 restore 後強制刷新
+            _refreshData();
+
+            if (mounted) {
+
+              setState(() {
+
+                _trackerDataFuture = _getTrackerData();
+
+              });
+
+              // 🚀 重置 swiper
+              if (_pageController.hasClients) {
+                _pageController.jumpToPage(
+                  _virtualInitialPage,
+                );
+              }
+
+              // 🚀 成功提示
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("☁️ 雲端資料已成功還原"),
+                ),
+              );
+            }
           });
     } catch (e) {
 

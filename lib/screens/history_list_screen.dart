@@ -68,7 +68,10 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
           _buildDynamicFilterChips(),
           Expanded(
             child: StreamBuilder<List<PoemRecord>>(
-              stream: isarService.isar.poemRecords.where().watch(fireImmediately: true),
+              stream: isarService.isar.poemRecords
+                  .filter()
+                  .isDeletedEqualTo(false)
+                  .watch(fireImmediately: true),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -79,6 +82,11 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
                 debugPrint("Isar 原生抓到總筆數: ${allRecords.length}");
 
                 final filteredRecords = allRecords.where((r) {
+
+                  if (r.userId != isarService.currentUid) {
+                    return false;
+                  }
+
                   // 🚀 診斷 3：針對每一筆紀錄進行「過濾原因」分析
                   bool inCat = _isScaleInCategory(r.scaleType, widget.currentCategory);
                   bool enabled = _enabledScales[r.scaleType] ?? true;

@@ -16,11 +16,28 @@ class IsarService {
 
   Future<Isar> openDB() async {
     if (Isar.instanceNames.isEmpty) {
-      final dir = await getApplicationDocumentsDirectory();
-      _isar = await Isar.open([PoemRecordSchema], directory: dir.path, inspector: true);
+
+      final dir =
+      await getApplicationDocumentsDirectory();
+
+      _isar = await Isar.open(
+        [PoemRecordSchema],
+        directory: dir.path,
+
+        // 🚀 關鍵修正
+        name: 'eczema_data',
+
+        inspector: true,
+      );
+
     } else {
-      _isar = Isar.getInstance()!;
+
+      _isar = Isar.getInstance(
+        'eczema_data',
+      );
+
     }
+
     return _isar!;
   }
 

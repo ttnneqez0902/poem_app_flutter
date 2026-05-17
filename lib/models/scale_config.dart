@@ -2,7 +2,7 @@ import 'package:flutter/material.dart'; // 🚀 必須引入，才能使用 Colo
 import 'poem_record.dart';
 
 // 🚀 1. 擴充科別分類
-enum AppCategory { dermatology, sleep, chronic, psychiatry, pain, rheumatology, gastro, womens, peds }
+enum AppCategory { dermatology, sleep, chronic, psychiatry, pain, rheumatology, gastro, womens, peds, neurology,}
 
 class ScaleQuestion {
   final String label;
@@ -149,6 +149,63 @@ class ScaleConfig {
         ScaleQuestion("飯後坐著（未飲酒）", options: ["從不", "很少", "中等", "極大機會"]),
       ],
     ),
+
+// ==========================================
+// 🧠 神經健康 (Neurology)
+// ==========================================
+
+    ScaleType.qolie10: ScaleConfig(
+      title: "癲癇生活品質 (QOLIE-10)",
+      category: AppCategory.neurology,
+      color: Colors.deepPurple,
+      maxScore: 4,
+      description: "評估癲癇發作對日常生活的影響",
+      questions: [
+        ScaleQuestion(
+          "過去四週，癲癇對生活品質影響程度",
+          options: ["完全沒有", "輕微", "中度", "嚴重", "非常嚴重"],
+        ),
+        ScaleQuestion(
+          "是否擔心下一次發作",
+          options: ["從不", "偶爾", "有時", "經常", "總是"],
+        ),
+        ScaleQuestion(
+          "發作是否影響工作或學習",
+          options: ["完全沒有", "輕微", "中度", "嚴重", "無法進行"],
+        ),
+        ScaleQuestion(
+          "發作是否影響社交活動",
+          options: ["完全沒有", "輕微", "中度", "嚴重", "完全避免"],
+        ),
+      ],
+    ),
+
+    ScaleType.lsss: ScaleConfig(
+      title: "發作嚴重度追蹤 (LSSS)",
+      category: AppCategory.neurology,
+      color: Colors.redAccent,
+      maxScore: 4,
+      description: "追蹤近期癲癇發作嚴重程度",
+      questions: [
+        ScaleQuestion(
+          "最近一次發作持續時間",
+          options: ["不到30秒", "30秒-1分鐘", "1-3分鐘", "超過3分鐘", "非常久"],
+        ),
+        ScaleQuestion(
+          "發作後恢復時間",
+          options: ["立即恢復", "幾分鐘", "30分鐘內", "數小時", "超過一天"],
+        ),
+        ScaleQuestion(
+          "發作是否造成受傷",
+          options: ["沒有", "輕微", "中度", "嚴重", "需就醫"],
+        ),
+        ScaleQuestion(
+          "發作頻率",
+          options: ["幾乎沒有", "每月一次", "每週一次", "每週多次", "每天"],
+        ),
+      ],
+    ),
+
 
 // ==========================================
 // 🩺 慢性病管理 (Chronic Disease)

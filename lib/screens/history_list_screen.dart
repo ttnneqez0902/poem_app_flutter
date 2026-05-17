@@ -271,9 +271,18 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
 
     // 🚀 關鍵修正 1：補上睡眠健康，歷史清單才看得到 ISI/PSQI/ESS
       case AppCategory.sleep:
-        return [ScaleType.psqi, ScaleType.isi, ScaleType.ess].contains(type);
+        return [
+          ScaleType.psqi,
+          ScaleType.isi,
+          ScaleType.ess,
+        ].contains(type);
 
-    // 🚀 關鍵修正 2：補上慢性病管理，歷史清單才看得到血壓/CAT/DDS
+      case AppCategory.neurology:
+        return [
+          ScaleType.qolie10,
+          ScaleType.lsss,
+        ].contains(type);
+
       case AppCategory.chronic:
         return [ScaleType.bp_log, ScaleType.cat, ScaleType.dds, ScaleType.bpi].contains(type);
 
@@ -303,6 +312,7 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       case AppCategory.gastro: return "腸胃紀錄";
       case AppCategory.womens: return "女性健康";
       case AppCategory.peds: return "兒科發展";
+      case AppCategory.neurology: return "神經健康";
       default: return "健康追蹤";
     }
   }
@@ -315,6 +325,14 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       case ScaleType.cycle: return "生理週期";
       case ScaleType.haq: return "功能評估";
       case ScaleType.ibs_sss: return "腸胃嚴重度";
+      case ScaleType.qolie10:
+        return "QOLIE-10";
+
+      case ScaleType.lsss:
+        return "LSSS";
+
+      case ScaleType.ess:
+        return "Epworth";
       default: return type.name.toUpperCase();
     }
   }
@@ -331,6 +349,14 @@ class _HistoryListScreenState extends State<HistoryListScreen> {
       case ScaleType.bristol: return Icons.water_drop_rounded;    // 🚀 腸胃
       case ScaleType.cycle: return Icons.calendar_month_rounded; // 🚀 女性
       case ScaleType.growth: return Icons.child_care_rounded;    // 🚀 兒科
+      case ScaleType.qolie10:
+        return Icons.psychology_rounded;
+
+      case ScaleType.lsss:
+        return Icons.bolt_rounded;
+
+      case ScaleType.ess:
+        return Icons.bedtime_rounded;
       default: return Icons.assignment_rounded;
     }
   }

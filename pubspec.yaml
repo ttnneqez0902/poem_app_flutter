@@ -45,7 +45,7 @@ dependencies:
   # --- 報表導出與分享 ---
   pdf: ^3.10.8
   printing: ^5.11.1
-  share_plus: ^10.0.0
+  share_plus: ^10.1.4
 
   # --- Firebase 核心 ---
   firebase_core: ^3.15.2
@@ -54,7 +54,7 @@ dependencies:
   sign_in_with_apple: ^7.0.1
   flutter_line_sdk: ^2.6.2
   marquee: ^2.3.0
-  connectivity_plus: ^7.0.0
+  connectivity_plus: ^6.1.4
 
 dev_dependencies:
   flutter_test:

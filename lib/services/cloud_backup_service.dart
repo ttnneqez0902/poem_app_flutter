@@ -10,6 +10,7 @@ import 'package:googleapis_auth/googleapis_auth.dart' as auth;
 import 'package:http/http.dart' as http;
 import 'package:icloud_storage/icloud_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/poem_record.dart';
 
 // --- [ 1. 數據模型與異常定義 ] ---
 
@@ -32,7 +33,7 @@ class BackupMetadata {
   BackupMetadata({
     required this.createdAt,
     required this.appVersion,
-    this.schemaVersion = 1,
+    this.schemaVersion = 2,
     required this.provider,
   });
 
@@ -46,7 +47,7 @@ class BackupMetadata {
   factory BackupMetadata.fromJson(Map<String, dynamic> json) => BackupMetadata(
     createdAt: DateTime.parse(json['createdAt']),
     appVersion: json['appVersion'] ?? 'unknown',
-    schemaVersion: json['schemaVersion'] ?? 1,
+    schemaVersion: json['schemaVersion'] ?? 2,
     provider: json['provider'] ?? 'unknown',
   );
 }
@@ -76,11 +77,12 @@ class CloudBackupService {
   // 🚀 新增：當資料庫切換完成時的通知，確保全局實體同步
   final Function(Isar newIsar)? onDbSwapped;
 
-  static const int currentSchemaVersion = 1;
+  static const int currentSchemaVersion = 2;
   static const String _dbFileName = 'eczema_data.isar';
   static const String _metaFileName = 'backup_info.json';
   static const String _progressFlag = '.backup_in_progress';
-  static const String _iCloudContainer = 'iCloud.com.your.app.bundle.id';
+  static const String _iCloudContainer =
+      'iCloud.com.charlie.eczemaSelfAssessment2026';
 
   CloudBackupService({
     required this.isar,
@@ -90,35 +92,60 @@ class CloudBackupService {
   });
 
   CloudProvider get effectiveProvider {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return CloudProvider.none;
-    for (final info in user.providerData) {
-      if (info.providerId == 'apple.com') return CloudProvider.iCloud;
-      if (info.providerId == 'google.com') return CloudProvider.googleDrive;
+    if (Platform.isIOS) {
+      return CloudProvider.iCloud;
     }
-    return Platform.isIOS ? CloudProvider.iCloud : CloudProvider.googleDrive;
+
+    return CloudProvider.googleDrive;
   }
 
   // --- [ 3. 統一對外接口 ] ---
 
-  Future<void> runBackup(String photoDirPath, {required String appVersion, void Function(BackupProgress)? onProgress}) async {
+  Future<void> runBackup(
+      String photoDirPath, {
+        required String appVersion,
+        void Function(BackupProgress)? onProgress,
+      }) async {
+
     final provider = effectiveProvider;
-    if (provider == CloudProvider.none) throw BackupException(BackupExceptionType.permission, "請先登入雲端帳號");
+
+    if (provider == CloudProvider.none) {
+      throw BackupException(
+        BackupExceptionType.permission,
+        "請先登入雲端帳號",
+      );
+    }
+
+    final docDir = await getApplicationDocumentsDirectory();
+
+    final dbBackupFile = File(
+      p.join(docDir.path, 'temp_for_upload.isar'),
+    );
 
     try {
-      onProgress?.call(BackupProgress(message: "正在快照數據庫...", current: 0, total: 100));
-      final docDir = await getApplicationDocumentsDirectory();
-      final dbBackupFile = File(p.join(docDir.path, 'temp_for_upload.isar'));
+      onProgress?.call(
+        BackupProgress(
+          message: "正在快照數據庫...",
+          current: 0,
+          total: 100,
+        ),
+      );
 
-      if (await dbBackupFile.exists()) await dbBackupFile.delete();
+      if (await dbBackupFile.exists()) {
+        await dbBackupFile.delete();
+      }
+
       await isar.copyToFile(dbBackupFile.path);
 
-      // 🚀 修正 1：非同步處理照片列表
       final List<File> photos = [];
+
       final photoDir = Directory(photoDirPath);
+
       if (await photoDir.exists()) {
         await for (var entity in photoDir.list()) {
-          if (entity is File) photos.add(entity);
+          if (entity is File) {
+            photos.add(entity);
+          }
         }
       }
 
@@ -129,16 +156,52 @@ class CloudBackupService {
         provider: provider.name,
       );
 
-      if (provider == CloudProvider.googleDrive) {
-        await _backupToGoogleDrive(dbBackupFile, photos, meta, onProgress);
-      } else {
-        await _backupToICloud(dbBackupFile, photos, meta, onProgress);
+      switch (provider) {
+        case CloudProvider.googleDrive:
+          await _backupToGoogleDrive(
+            dbBackupFile,
+            photos,
+            meta,
+            onProgress,
+          );
+          break;
+
+        case CloudProvider.iCloud:
+          await _backupToICloud(
+            dbBackupFile,
+            photos,
+            meta,
+            onProgress,
+          );
+          break;
+
+        default:
+          throw BackupException(
+            BackupExceptionType.permission,
+            "沒有可用的雲端服務",
+          );
       }
 
-      if (await dbBackupFile.exists()) await dbBackupFile.delete();
-      onProgress?.call(BackupProgress(message: "雲端備份完成", current: 100, total: 100));
+      onProgress?.call(
+        BackupProgress(
+          message: "雲端備份完成",
+          current: 100,
+          total: 100,
+        ),
+      );
+
     } catch (e) {
+
       throw _parseException(e);
+
+    } finally {
+
+      // 🚀 無論成功失敗都清理 temp file
+      if (await dbBackupFile.exists()) {
+        try {
+          await dbBackupFile.delete();
+        } catch (_) {}
+      }
     }
   }
 
@@ -159,10 +222,28 @@ class CloudBackupService {
       final tempDir = await getTemporaryDirectory();
       final tempDbPath = p.join(tempDir.path, 'restored_db.isar');
 
-      if (provider == CloudProvider.googleDrive) {
-        await _restoreFromGoogleDrive(photoDirPath, tempDbPath, onProgress);
-      } else {
-        await _restoreFromICloud(photoDirPath, tempDbPath, onProgress);
+      switch (provider) {
+        case CloudProvider.googleDrive:
+          await _restoreFromGoogleDrive(
+            photoDirPath,
+            tempDbPath,
+            onProgress,
+          );
+          break;
+
+        case CloudProvider.iCloud:
+          await _restoreFromICloud(
+            photoDirPath,
+            tempDbPath,
+            onProgress,
+          );
+          break;
+
+        default:
+          throw BackupException(
+            BackupExceptionType.permission,
+            "沒有可用的雲端服務",
+          );
       }
 
       onProgress?.call(BackupProgress(message: "完成還原切換中...", current: 95, total: 100));
@@ -188,7 +269,16 @@ class CloudBackupService {
     final provider = effectiveProvider;
     if (provider == CloudProvider.none) return null;
     try {
-      return (provider == CloudProvider.googleDrive) ? await _getGoogleMeta() : await _getICloudMeta();
+      switch (provider) {
+        case CloudProvider.googleDrive:
+          return await _getGoogleMeta();
+
+        case CloudProvider.iCloud:
+          return await _getICloudMeta();
+
+        default:
+          return null;
+      }
     } catch (_) {
       return null;
     }
@@ -277,7 +367,12 @@ class CloudBackupService {
         // 而是直接將雲端 Stream 寫入檔案，這對 100MB+ 的資料庫非常重要
         final file = File(savePath);
         final sink = file.openWrite();
-        await res.stream.pipe(sink); // 自動管理記憶體與關閉串流
+
+        try {
+          await res.stream.pipe(sink);
+        } finally {
+          await sink.close();
+        }
       }
     } finally {
       authClient.close();
@@ -286,34 +381,120 @@ class CloudBackupService {
 
   // --- [ 5. iCloud 實作 ] ---
 
-  Future<void> _backupToICloud(File dbFile, List<File> photos, BackupMetadata meta, void Function(BackupProgress)? onProgress) async {
+  Future<void> _backupToICloud(
+      File dbFile,
+      List<File> photos,
+      BackupMetadata meta,
+      void Function(BackupProgress)? onProgress,
+      ) async {
+
     await _assertICloudAvailable();
+
     final tempDir = await getTemporaryDirectory();
 
-    onProgress?.call(BackupProgress(message: "建立同步標記...", current: 10, total: 100));
-    final flagFile = File(p.join(tempDir.path, _progressFlag));
-    await flagFile.writeAsString(jsonEncode({'startedAt': DateTime.now().toIso8601String()}));
-    await ICloudStorage.upload(containerId: _iCloudContainer, filePath: flagFile.path, destinationRelativePath: _progressFlag);
+    onProgress?.call(
+      BackupProgress(
+        message: "建立同步標記...",
+        current: 10,
+        total: 100,
+      ),
+    );
 
-    final cloudFiles = await ICloudStorage.gather(containerId: _iCloudContainer);
+    final flagFile = File(
+      p.join(tempDir.path, _progressFlag),
+    );
+
+    await flagFile.writeAsString(
+      jsonEncode({
+        'startedAt': DateTime.now().toIso8601String(),
+      }),
+    );
+
+    await ICloudStorage.upload(
+      containerId: _iCloudContainer,
+      filePath: flagFile.path,
+      destinationRelativePath: _progressFlag,
+    ).timeout(
+      const Duration(minutes: 1),
+    );
+
+    final cloudFiles = await ICloudStorage.gather(
+      containerId: _iCloudContainer,
+    ).timeout(
+      const Duration(seconds: 20),
+    );
+
     for (final f in cloudFiles) {
       if (p.basename(f.relativePath) != _progressFlag) {
-        await ICloudStorage.delete(containerId: _iCloudContainer, relativePath: f.relativePath);
+
+        await ICloudStorage.delete(
+          containerId: _iCloudContainer,
+          relativePath: f.relativePath,
+        ).timeout(
+          const Duration(seconds: 30),
+        );
       }
     }
 
-    onProgress?.call(BackupProgress(message: "上傳資料庫...", current: 30, total: 100));
-    await ICloudStorage.upload(containerId: _iCloudContainer, filePath: dbFile.path, destinationRelativePath: _dbFileName);
+    onProgress?.call(
+      BackupProgress(
+        message: "上傳資料庫...",
+        current: 30,
+        total: 100,
+      ),
+    );
+
+    await ICloudStorage.upload(
+      containerId: _iCloudContainer,
+      filePath: dbFile.path,
+      destinationRelativePath: _dbFileName,
+    ).timeout(
+      const Duration(minutes: 5),
+    );
 
     for (int i = 0; i < photos.length; i++) {
-      onProgress?.call(BackupProgress(message: "上傳照片 (${i+1}/${photos.length})", current: 30 + ((i / photos.length) * 60).toInt(), total: 100));
-      await ICloudStorage.upload(containerId: _iCloudContainer, filePath: photos[i].path, destinationRelativePath: p.basename(photos[i].path));
+
+      onProgress?.call(
+        BackupProgress(
+          message: "上傳照片 (${i + 1}/${photos.length})",
+          current: 30 + ((i / photos.length) * 60).toInt(),
+          total: 100,
+        ),
+      );
+
+      await ICloudStorage.upload(
+        containerId: _iCloudContainer,
+        filePath: photos[i].path,
+        destinationRelativePath: p.basename(
+          photos[i].path,
+        ),
+      ).timeout(
+        const Duration(minutes: 2),
+      );
     }
 
-    final metaFile = File(p.join(tempDir.path, _metaFileName));
-    await metaFile.writeAsString(jsonEncode(meta.toJson()));
-    await ICloudStorage.upload(containerId: _iCloudContainer, filePath: metaFile.path, destinationRelativePath: _metaFileName);
-    await ICloudStorage.delete(containerId: _iCloudContainer, relativePath: _progressFlag);
+    final metaFile = File(
+      p.join(tempDir.path, _metaFileName),
+    );
+
+    await metaFile.writeAsString(
+      jsonEncode(meta.toJson()),
+    );
+
+    await ICloudStorage.upload(
+      containerId: _iCloudContainer,
+      filePath: metaFile.path,
+      destinationRelativePath: _metaFileName,
+    ).timeout(
+      const Duration(minutes: 1),
+    );
+
+    await ICloudStorage.delete(
+      containerId: _iCloudContainer,
+      relativePath: _progressFlag,
+    ).timeout(
+      const Duration(seconds: 30),
+    );
   }
 
   Future<void> _restoreFromICloud(String photoDirPath, String tempDbPath, void Function(BackupProgress)? onProgress) async {
@@ -324,7 +505,13 @@ class CloudBackupService {
     if (flagMatches.isNotEmpty) {
       final tempDir = await getTemporaryDirectory();
       final localFlag = p.join(tempDir.path, 'flag_check.json');
-      await ICloudStorage.download(containerId: _iCloudContainer, relativePath: _progressFlag, destinationFilePath: localFlag);
+      await ICloudStorage.download(
+        containerId: _iCloudContainer,
+        relativePath: _progressFlag,
+        destinationFilePath: localFlag,
+      ).timeout(
+        const Duration(minutes: 1),
+      );
       final startedAt = DateTime.parse(jsonDecode(await File(localFlag).readAsString())['startedAt']);
       if (DateTime.now().difference(startedAt).inHours < 2) {
         throw BackupException(BackupExceptionType.incomplete, "雲端備份尚未完成，請稍候。");
@@ -339,7 +526,13 @@ class CloudBackupService {
 
       if (name == _metaFileName || name == _progressFlag) continue;
       final savePath = (name == _dbFileName) ? tempDbPath : p.join(photoDirPath, name);
-      await ICloudStorage.download(containerId: _iCloudContainer, relativePath: file.relativePath, destinationFilePath: savePath);
+      await ICloudStorage.download(
+        containerId: _iCloudContainer,
+        relativePath: file.relativePath,
+        destinationFilePath: savePath,
+      ).timeout(
+        const Duration(minutes: 3),
+      );
     }
   }
 
@@ -359,6 +552,9 @@ class CloudBackupService {
     }
 
     try {
+      if (await File(actualDbPath).exists()) {
+        await File(actualDbPath).delete();
+      }
       // 2. 移動下載的檔案到正式位置
       await File(tempDbPath).copy(actualDbPath);
 
@@ -443,7 +639,13 @@ class CloudBackupService {
       if (meta.isEmpty) return null;
       final tempDir = await getTemporaryDirectory();
       final dest = p.join(tempDir.path, 'temp_meta.json');
-      await ICloudStorage.download(containerId: _iCloudContainer, relativePath: meta.first.relativePath, destinationFilePath: dest);
+      await ICloudStorage.download(
+        containerId: _iCloudContainer,
+        relativePath: meta.first.relativePath,
+        destinationFilePath: dest,
+      ).timeout(
+        const Duration(minutes: 1),
+      );
       return BackupMetadata.fromJson(jsonDecode(await File(dest).readAsString()));
     } catch (_) {
       return null;
@@ -486,14 +688,96 @@ class CloudBackupService {
   }
 
 
-  Future<void> _verifyRestoredDatabase(String dbPath) async {
+  Future<void> _verifyRestoredDatabase(
+      String dbPath,
+      ) async {
+
     final file = File(dbPath);
-    if (!await file.exists() || await file.length() < 32 * 1024) throw BackupException(BackupExceptionType.unknown, "數據庫檔案毀損");
+
+    if (!await file.exists()) {
+      throw BackupException(
+        BackupExceptionType.unknown,
+        "找不到還原資料庫",
+      );
+    }
+
+    if (await file.length() < 32 * 1024) {
+      throw BackupException(
+        BackupExceptionType.unknown,
+        "資料庫檔案毀損",
+      );
+    }
+
+    final tempDir = await getTemporaryDirectory();
+
+    final verifyDir = Directory(
+      p.join(tempDir.path, 'verify_db'),
+    );
+
+    if (await verifyDir.exists()) {
+      await verifyDir.delete(recursive: true);
+    }
+
+    await verifyDir.create(recursive: true);
+
+    final copiedDbPath = p.join(
+      verifyDir.path,
+      'verify_db.isar',
+    );
+
+    await file.copy(copiedDbPath);
+
+    try {
+
+      final verifyIsar = await Isar.open(
+        [
+          PoemRecordSchema,
+        ],
+        directory: verifyDir.path,
+        name: 'verify_db',
+      );
+
+      await verifyIsar.close();
+
+    } catch (e) {
+
+      throw BackupException(
+        BackupExceptionType.unknown,
+        "資料庫驗證失敗",
+        e,
+      );
+
+    } finally {
+
+      if (await verifyDir.exists()) {
+        await verifyDir.delete(
+          recursive: true,
+        );
+      }
+    }
   }
 
   Future<void> _assertICloudAvailable() async {
-    try { await ICloudStorage.gather(containerId: _iCloudContainer); }
-    catch (e) { throw BackupException(BackupExceptionType.permission, "iCloud 服務不可用", e); }
+    if (!Platform.isIOS) {
+      throw BackupException(
+        BackupExceptionType.permission,
+        "iCloud 僅支援 iOS",
+      );
+    }
+
+    try {
+      await ICloudStorage.gather(
+        containerId: _iCloudContainer,
+      ).timeout(
+        const Duration(seconds: 20),
+      );
+    } catch (e) {
+      throw BackupException(
+        BackupExceptionType.permission,
+        "請確認 iCloud Drive 已開啟",
+        e,
+      );
+    }
   }
 
   BackupException _parseException(Object e) {

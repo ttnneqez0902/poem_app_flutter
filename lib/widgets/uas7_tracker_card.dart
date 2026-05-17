@@ -5,16 +5,18 @@ import '../models/poem_record.dart';
 import '../screens/poem_survey_screen.dart';
 import '../models/scale_config.dart';
 
-class Uas7TrackerCard extends StatefulWidget {
-  final DateTime startDate;
+class ScaleTrackerCard extends StatefulWidget {
+  final DateTime? startDate;
   final List<bool> completionStatus;
   final List<PoemRecord> history;
   final VoidCallback? onRefresh;
   final String? reminderText;
   final VoidCallback? onReminderTap;
+  final ScaleType scaleType;
 
-  const Uas7TrackerCard({
+  const ScaleTrackerCard({
     super.key,
+    required this.scaleType,
     required this.startDate,
     required this.completionStatus,
     required this.history,
@@ -24,10 +26,10 @@ class Uas7TrackerCard extends StatefulWidget {
   });
 
   @override
-  State<Uas7TrackerCard> createState() => _Uas7TrackerCardState();
+  State<ScaleTrackerCard> createState() => _ScaleTrackerCardState();
 }
 
-class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
+class _ScaleTrackerCardState extends State<ScaleTrackerCard> {
   final ScrollController _scrollController = ScrollController();
 
   @override
@@ -43,18 +45,37 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   }
 
   void _scrollToToday() {
+
     if (!_scrollController.hasClients) return;
+
+    final startDate = widget.startDate;
+
+    if (startDate == null) return;
+
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final int index = today.difference(widget.startDate).inDays;
 
-    if (index >= 0 && index < widget.completionStatus.length) {
+    final int index =
+        today.difference(startDate).inDays;
+
+    if (index >= 0 &&
+        index < widget.completionStatus.length) {
+
       double itemWidth = 64.0;
-      double screenWidth = MediaQuery.of(context).size.width;
-      double centerOffset = (index * itemWidth) - (screenWidth / 2) + (itemWidth / 2) + 20;
+      double screenWidth =
+          MediaQuery.of(context).size.width;
+
+      double centerOffset =
+          (index * itemWidth) -
+              (screenWidth / 2) +
+              (itemWidth / 2) +
+              20;
 
       _scrollController.animateTo(
-        centerOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+        centerOffset.clamp(
+          0.0,
+          _scrollController.position.maxScrollExtent,
+        ),
         duration: const Duration(milliseconds: 1000),
         curve: Curves.easeOutCubic,
       );
@@ -73,8 +94,17 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   @override
   Widget build(BuildContext context) {
     final bool isTodayDone = _checkIfTodayDone();
-    final Color themeColor = ScaleConfig.allScales[ScaleType.uas7]?.color ?? Colors.teal;
-    final String displayTitle = "UAS7"; // 🚀 直接用大寫縮寫
+    final Color themeColor = ScaleConfig.allScales[widget.scaleType]?.color ?? Colors.teal;
+    final scaleConfig = ScaleConfig.allScales[widget.scaleType];
+
+    final String displayTitle = {
+      ScaleType.uas7: "UAS7",
+      ScaleType.qolie10: "QOLIE-10",
+      ScaleType.lsss: "LSSS",
+      ScaleType.psqi: "PSQI",
+      ScaleType.isi: "ISI",
+      ScaleType.ess: "Epworth",
+    }[widget.scaleType] ?? widget.scaleType.name.toUpperCase();
 
     final DateTime nextDate = DateTime.now().add(const Duration(days: 1));
     final String nextExpectedDate = DateFormat('MM/dd').format(nextDate);
@@ -98,7 +128,11 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
               physics: const BouncingScrollPhysics(),
               child: Row(
                 children: List.generate(widget.completionStatus.length, (index) {
-                  final date = widget.startDate.add(Duration(days: index));
+                  final startDate =
+                      widget.startDate ?? DateTime.now();
+
+                  final date =
+                      startDate.add(Duration(days: index));
                   final bool isDone = widget.completionStatus[index];
                   final record = _getRecordAtDate(date);
                   final bool isToday = _isSameDay(date, DateTime.now());
@@ -157,6 +191,8 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
             Expanded(
               child: Text(
                 "$title 紀錄進度",
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontWeight: FontWeight.w900,
                   fontSize: 19,
@@ -237,7 +273,7 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
           bool? result = await Navigator.push<bool>(
             context,
             MaterialPageRoute(builder: (context) => PoemSurveyScreen(
-              initialType: ScaleType.uas7,
+              initialType: widget.scaleType,
               oldRecord: isDone ? record : null,
               targetDate: isDone ? null : date,
             )),
@@ -278,7 +314,13 @@ class _Uas7TrackerCardState extends State<Uas7TrackerCard> {
   bool _checkIfTodayDone() {
     final now = DateTime.now();
     for (int i = 0; i < widget.completionStatus.length; i++) {
-      if (_isSameDay(widget.startDate.add(Duration(days: i)), now)) return widget.completionStatus[i];
+      final startDate =
+          widget.startDate ?? DateTime.now();
+
+      if (_isSameDay(
+        startDate.add(Duration(days: i)),
+        now,
+      )) return widget.completionStatus[i];
     }
     return false;
   }

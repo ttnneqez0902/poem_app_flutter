@@ -199,6 +199,23 @@ class _HomeScreenState extends State<HomeScreen> {
         'icon': Icons.child_care_rounded
       },
     ],
+    AppCategory.neurology: [
+      {
+        'type': ScaleType.qolie10,
+        'title': 'QOLIE-10',
+        'sub': '生活品質影響',
+        'color': Colors.deepPurple,
+        'icon': Icons.psychology_alt_rounded,
+      },
+
+      {
+        'type': ScaleType.lsss,
+        'title': 'LSSS',
+        'sub': '發作嚴重度追蹤',
+        'color': Colors.redAccent,
+        'icon': Icons.bolt_rounded,
+      },
+    ]
   };
 
   @override
@@ -488,24 +505,48 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _getTrackerData() async {
+
     final today = DateTime.now();
-    final start = DateTime(today.year, today.month, today.day).subtract(const Duration(days: 8));
+
+    final start = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).subtract(const Duration(days: 8));
+
     final all = await isarService.getAllRecords();
 
-    // 建立基礎 Map
-    Map<String, dynamic> data = {
-      'uas7Start': start,
-      'uas7Status': List.generate(14, (i) => all.any((r) =>
-      r.scaleType == ScaleType.uas7 &&
-          DateUtils.isSameDay(r.targetDate ?? r.date, start.add(Duration(days: i))))),
-      'uas7Records': all.where((r) => r.scaleType == ScaleType.uas7).toList(),
-    };
+    Map<String, dynamic> data = {};
 
-    // 🚀 關鍵修正：自動抓取 ScaleType 清單中的所有數據
+    // 🚀 每個 ScaleType 自動建立 tracker data
     for (var type in ScaleType.values) {
-      data[type.name] = all.where((r) => r.scaleType == type).toList()
-        ..sort((a, b) => (b.targetDate ?? b.date ?? DateTime.now())
-            .compareTo(a.targetDate ?? a.date ?? DateTime.now()));
+
+      final records = all.where(
+            (r) => r.scaleType == type,
+      ).toList()
+        ..sort(
+              (a, b) =>
+              (b.targetDate ?? b.date ?? DateTime.now())
+                  .compareTo(
+                a.targetDate ?? a.date ?? DateTime.now(),
+              ),
+        );
+
+      data[type.name] = records;
+
+      // 🚀 通用 start
+      data['${type.name}Start'] = start;
+
+      // 🚀 通用 completion status
+      data['${type.name}Status'] = List.generate(
+        14,
+            (i) => records.any(
+              (r) => DateUtils.isSameDay(
+            r.targetDate ?? r.date,
+            start.add(Duration(days: i)),
+          ),
+        ),
+      );
     }
 
     return data;
@@ -527,58 +568,123 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleManualBackup() async {
-    final GoogleSignInAccount? account = await _googleSignIn.signInSilently() ??
-        await _googleSignIn.signIn();
+    final GoogleSignInAccount? account =
+        await _googleSignIn.signInSilently() ??
+            await _googleSignIn.signIn();
+
     if (account == null) return;
     if (_isSyncing) return;
 
     final docDir = await getApplicationDocumentsDirectory();
-    final dbFile = File(p.join(docDir.path, 'eczema_data.isar'));
-    final photoDir = Directory(p.join(docDir.path, 'photos'));
-    final totalSize = (await dbFile.exists() ? await dbFile.length() : 0) +
-        await _calculateDirectorySize(photoDir);
 
-    final bool confirmed = await showDialog<bool>(
-        context: context, builder: (ctx) =>
-        AlertDialog(
-          title: const Text("雲端備份說明"),
-          content: Text(
-              "將加密備份紀錄至 Google Drive。\n\n📦 預估大小：${_formatBytes(
-                  totalSize)}\n\n確定開始？"),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false),
-                child: const Text("取消")),
-            ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
-                child: const Text("開始備份")),
-          ],
-        )
-    ) ?? false;
+    // 🚀 改抓整個 isar 資料夾
+    final isarDir = Directory(
+      p.join(docDir.path, 'isar'),
+    );
+
+    // 🚀 照片資料夾
+    final photoDir = Directory(
+      p.join(docDir.path, 'photos'),
+    );
+
+    // 🚀 計算總大小
+    final int isarSize =
+    await _calculateDirectorySize(isarDir);
+
+    final int photoSize =
+    await _calculateDirectorySize(photoDir);
+
+    final int totalSize =
+        isarSize + photoSize;
+
+    // 🚀 避免顯示 0 B
+    final String sizeText =
+    totalSize == 0
+        ? "小於 1 KB"
+        : _formatBytes(totalSize);
+
+    final bool confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("雲端備份說明"),
+            content: Text(
+              "將加密備份紀錄至 Google Drive。\n\n"
+                  "📦 預估大小：$sizeText\n\n"
+                  "確定開始？",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () =>
+                    Navigator.pop(ctx, false),
+                child: const Text("取消"),
+              ),
+              ElevatedButton(
+                onPressed: () =>
+                    Navigator.pop(ctx, true),
+                child: const Text("開始備份"),
+              ),
+            ],
+          ),
+        ) ??
+            false;
 
     if (!confirmed) return;
+
     setState(() => _isSyncing = true);
+
     try {
       final prog = ValueNotifier<String>("準備中...");
       final per = ValueNotifier<double>(0.0);
-      await BackupDialogs.showProcessingDialog(context: context,
-          title: "同步至雲端",
-          progressNotifier: prog,
-          percentNotifier: per,
-          action: () async {
-            await cloudBackupService.runBackup(
-                photoDir.path, appVersion: _appVersion, onProgress: (p) {
+
+      await BackupDialogs.showProcessingDialog(
+        context: context,
+        title: "同步至雲端",
+        progressNotifier: prog,
+        percentNotifier: per,
+        action: () async {
+          await cloudBackupService.runBackup(
+            photoDir.path,
+            appVersion: _appVersion,
+            onProgress: (p) {
               prog.value = p.message;
               per.value = p.progress;
-            });
-            (await SharedPreferences.getInstance()).setString(
-                'last_backup_time', DateTime.now().toIso8601String());
-          });
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ 備份完成")));
+            },
+          );
+
+          (await SharedPreferences.getInstance())
+              .setString(
+            'last_backup_time',
+            DateTime.now().toIso8601String(),
+          );
+        },
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ 備份完成"),
+          ),
+        );
+      }
     } catch (e) {
-      if (mounted && e is BackupException) BackupErrorDialog.show(context, e);
+      if (mounted && e is BackupException) {
+        await BackupErrorDialog.show(
+          context,
+          e,
+          onRetry: () async {
+            if (mounted) {
+              setState(() => _isSyncing = false);
+            }
+            await _handleManualBackup();
+          },
+        );
+      }
     }
     finally {
-      if (mounted) setState(() => _isSyncing = false);
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
     }
   }
 
@@ -603,7 +709,20 @@ class _HomeScreenState extends State<HomeScreen> {
             if (mounted) _refreshData();
           });
     } catch (e) {
-      if (mounted && e is BackupException) BackupErrorDialog.show(context, e);
+
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+
+      if (mounted && e is BackupException) {
+        await BackupErrorDialog.show(
+          context,
+          e,
+          onRetry: () async {
+            await _handleRestore();
+          },
+        );
+      }
     }
     finally {
       if (mounted) setState(() => _isSyncing = false);
@@ -732,13 +851,23 @@ class _HomeScreenState extends State<HomeScreen> {
           ]
       ),
       child: PopupMenuButton<String>(
+        constraints: BoxConstraints(
+          minWidth: MediaQuery.of(context).size.width * 0.65,
+        ),
         onSelected: (val) {
           if (val == 'photo')
             _handleChangePhoto();
-          else if (val == 'sync')
-            _handleManualBackup();
+          else if (val == 'sync') {
+            if (Platform.isIOS) {
+              _showIOSBackupDialog();
+            } else {
+              _handleManualBackup();
+            }
+          }
           else if (val == 'restore')
             _handleRestore();
+          else if (val == 'auto_sync')
+            _showAutoSyncDialog();
           else if (val == 'logout') _handleLogout(context);
         },
         child: CircleAvatar(
@@ -761,23 +890,52 @@ class _HomeScreenState extends State<HomeScreen> {
             Text("更換頭像")
           ])),
           const PopupMenuDivider(),
-          PopupMenuItem(value: 'sync', child: Row(children: [
-            _isSyncing
-                ? const SizedBox(width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.cloud_done_rounded, color: Colors.green),
-            // 🚀 使用完成感圖標
-            const SizedBox(width: 12),
-            const Text("把資料存進雲端")
-            // 🚀 生活化的語氣
-          ])),
+          PopupMenuItem(
+            value: 'sync',
+            child: Row(
+              children: [
+                _isSyncing
+                    ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                    : const Icon(
+                  Icons.cloud_done_rounded,
+                  color: Colors.green,
+                ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Text(
+                    Platform.isAndroid
+                        ? "☁️ Google Drive 備份"
+                        : "☁️ 備份到雲端",
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
           const PopupMenuItem(value: 'restore', child: Row(children: [
             Icon(Icons.settings_backup_restore_rounded, color: Colors.orange),
             // 🚀 更有「找回」的感覺
             const SizedBox(width: 12),
-            Text("找回雲端資料")
+            Text("☁️ 找回雲端資料")
           ])),
+
+          const PopupMenuItem(
+            value: 'auto_sync',
+            child: Row(
+              children: [
+                Icon(Icons.sync, color: Colors.blue),
+                SizedBox(width: 12),
+                Text("🔄 多裝置同步 (自動)"),
+              ],
+            ),
+          ),
+
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'logout', child: Row(children: [
             Icon(Icons.meeting_room_rounded, color: Colors.redAccent),
@@ -801,10 +959,22 @@ class _HomeScreenState extends State<HomeScreen> {
       AppCategory.gastro: "腸胃紀錄",
       AppCategory.womens: "女性健康",
       AppCategory.peds: "兒科發展",
+      AppCategory.neurology: "神經健康",
     };
 
     // 🚀 核心排序邏輯：複製一份清單來排序，不破壞原本的 AppCategory.values
-    List<AppCategory> sortedCategories = AppCategory.values.toList();
+    List<AppCategory> sortedCategories = [
+      AppCategory.dermatology,
+      AppCategory.sleep,
+      AppCategory.neurology,
+      AppCategory.chronic,
+      AppCategory.psychiatry,
+      AppCategory.pain,
+      AppCategory.rheumatology,
+      AppCategory.gastro,
+      AppCategory.womens,
+      AppCategory.peds,
+    ];
     sortedCategories.sort((a, b) {
       // 取得時間，若沒填過就給一個遠古時代的日期 (2000年) 讓它墊底
       DateTime timeA = _lastCompletionTimes[a] ?? DateTime(2000);
@@ -878,6 +1048,215 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _showIOSBackupDialog() async {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("☁️ 雲端備份"),
+        content: const Text(
+          "目前雲端備份功能使用 Google Drive。\n\n未來版本可能支援更多雲端服務。",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("取消"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _handleManualBackup();
+            },
+            child: const Text("繼續"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAutoSyncDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    bool autoSync = prefs.getBool('auto_sync') ?? false;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 24,
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E1E),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.08),
+                  ),
+                ),
+
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+
+                    /// HEADER
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Icon(
+                            Icons.cloud_sync_rounded,
+                            color: Color(0xFF7CC6FF),
+                            size: 30,
+                          ),
+                        ),
+
+                        const SizedBox(width: 16),
+
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                            children: [
+
+                              const Text(
+                                "多裝置同步",
+                                style: TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
+
+                              const SizedBox(height: 6),
+
+                              Text(
+                                "自動同步您的資料與照片",
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: Colors.white.withOpacity(0.6),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 28),
+
+                    /// DESCRIPTION
+                    Text(
+                      "開啟後會自動同步資料到您的雲端帳號，\n並在其他裝置上保持最新狀態。",
+                      style: TextStyle(
+                        fontSize: 16,
+                        height: 1.5,
+                        color: Colors.white.withOpacity(0.82),
+                      ),
+                    ),
+
+                    const SizedBox(height: 28),
+
+                    /// SWITCH CARD
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+
+                      child: Row(
+                        children: [
+
+                          const Expanded(
+                            child: Text(
+                              "自動同步",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+
+                          Transform.scale(
+                            scale: 1.05,
+                            child: Switch(
+                              value: autoSync,
+
+                              onChanged: (value) async {
+
+                                await prefs.setBool(
+                                  'auto_sync',
+                                  value,
+                                );
+
+                                setState(() {
+                                  autoSync = value;
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 22),
+
+                    /// CLOSE BUTTON
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor:
+                          const Color(0xFF2C2C2E),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 16,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(18),
+                          ),
+                        ),
+
+                        onPressed: () {
+                          Navigator.pop(context);
+                        },
+
+                        child: const Text(
+                          "完成",
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1033,7 +1412,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   // 5. 原本流程
                   _refreshData();
+
+                  await Future.delayed(
+                    const Duration(milliseconds: 300),
+                  );
+
+// 先往下滑
+                  if (_scrollController.hasClients) {
+                    await _scrollController.animateTo(
+                      700,
+                      duration: const Duration(milliseconds: 700),
+                      curve: Curves.easeOutCubic,
+                    );
+                  }
+
+                  // 再切換到底下對應卡片
+                  if (_pageController.hasClients) {
+
+                    final currentScales =
+                        _categoryConfigs[_currentCategory] ?? [];
+
+                    int targetPage = currentScales.indexWhere(
+                          (e) => e['type'] == targetType,
+                    );
+
+                    if (targetPage < 0) {
+                      targetPage = 0;
+                    }
+
+                    await _pageController.animateToPage(
+                      targetPage,
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.easeOutCubic,
+                    );
+                  }
+
                   _showInterstitialAd();
+
                   _checkAndSilentBackup();
                 }
               } else {
@@ -1469,7 +1884,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // 🚀 修改點：只過濾出「屬於當前科別」且「已啟用」的量表類型
     final enabledTypes = ScaleType.values.where((t) =>
     _isScaleInCategory(t, _currentCategory) && // 🚀 加入科別過濾
-        _enabledScales[t] == true
+        (_enabledScales[t] ?? true)
     ).toList();
 
     if (enabledTypes.isEmpty) return const SizedBox.shrink();
@@ -1498,26 +1913,72 @@ class _HomeScreenState extends State<HomeScreen> {
   // 🚀 請確保這是你程式碼中唯一的 _isScaleInCategory 方法
   bool _isScaleInCategory(ScaleType type, AppCategory category) {
     switch (category) {
+
       case AppCategory.dermatology:
-        return [ScaleType.adct, ScaleType.poem, ScaleType.uas7, ScaleType.scorad].contains(type);
-      // 🚀 補上睡眠健康
+        return [
+          ScaleType.adct,
+          ScaleType.poem,
+          ScaleType.uas7,
+          ScaleType.scorad,
+        ].contains(type);
+
+    // 🚀 睡眠健康
       case AppCategory.sleep:
-        return [ScaleType.psqi, ScaleType.isi, ScaleType.ess].contains(type);
-       // 🚀 補上慢性病管理
+        return [
+          ScaleType.psqi,
+          ScaleType.isi,
+          ScaleType.ess,
+        ].contains(type);
+
+    // 🚀 神經健康（新增這段）
+      case AppCategory.neurology:
+        return [
+          ScaleType.qolie10,
+          ScaleType.lsss,
+        ].contains(type);
+
+    // 🚀 慢性病管理
       case AppCategory.chronic:
-        return [ScaleType.bp_log, ScaleType.cat, ScaleType.dds, ScaleType.bpi].contains(type);
+        return [
+          ScaleType.bp_log,
+          ScaleType.cat,
+          ScaleType.dds,
+          ScaleType.bpi,
+        ].contains(type);
+
       case AppCategory.psychiatry:
-        return [ScaleType.phq9, ScaleType.gad7].contains(type);
+        return [
+          ScaleType.phq9,
+          ScaleType.gad7,
+        ].contains(type);
+
       case AppCategory.pain:
-        return type == ScaleType.vas;
+        return [
+          ScaleType.vas,
+        ].contains(type);
+
       case AppCategory.rheumatology:
-        return [ScaleType.haq, ScaleType.vas].contains(type);
+        return [
+          ScaleType.haq,
+          ScaleType.vas,
+        ].contains(type);
+
       case AppCategory.gastro:
-        return [ScaleType.bristol, ScaleType.ibs_sss].contains(type);
+        return [
+          ScaleType.bristol,
+          ScaleType.ibs_sss,
+        ].contains(type);
+
       case AppCategory.womens:
-        return type == ScaleType.cycle;
+        return [
+          ScaleType.cycle,
+        ].contains(type);
+
       case AppCategory.peds:
-        return type == ScaleType.growth;
+        return [
+          ScaleType.growth,
+        ].contains(type);
+
       default:
         return false;
     }
@@ -1529,11 +1990,17 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (type) {
     // 1. 蕁麻疹專用卡片 (保持不變)
       case ScaleType.uas7:
-        return Uas7TrackerCard(
-            startDate: data['uas7Start'],
-            completionStatus: data['uas7Status'],
-            history: data['uas7Records'],
-            onRefresh: _refreshData
+      case ScaleType.qolie10:
+      case ScaleType.lsss:
+      case ScaleType.psqi:
+      case ScaleType.isi:
+      case ScaleType.ess:
+        return ScaleTrackerCard(
+          scaleType: type,
+          startDate: data['${type.name}Start'],
+          completionStatus: data['${type.name}Status'],
+          history: history,
+          onRefresh: _refreshData,
         );
 
     // 2. 兒科：生長數據 (cm/kg 動態切換)
@@ -1941,12 +2408,19 @@ class _AnimatedScaleCard extends StatelessWidget {
                   children: [
                     Icon(scale['icon'], size: 40, color: isEnabled ? color : Colors.grey),
                     const SizedBox(height: 8),
-                    Text(
-                      scale['title'],
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        color: isEnabled ? color : Colors.grey,
+                    SizedBox(
+                      height: 48,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          scale['title'],
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                            color: isEnabled ? color : Colors.grey,
+                          ),
+                        ),
                       ),
                     ),
 

@@ -5,18 +5,30 @@ import 'cloud_backup_service.dart';     // 確保路徑正確以引用 BackupExc
 /// 🚀 專門處理備份與還原異常的彈出對話框
 class BackupErrorDialog extends StatelessWidget {
   final BackupException exception;
+  final Future<void> Function()? onRetry;
 
-  const BackupErrorDialog({super.key, required this.exception});
+  const BackupErrorDialog({
+    super.key,
+    required this.exception,
+    this.onRetry,
+  });
 
   /// 快速顯示對話框的靜態方法
-  static Future<void> show(BuildContext context, BackupException e) {
+  static Future<void> show(
+      BuildContext context,
+      BackupException e, {
+        Future<void> Function()? onRetry,
+      }) {
     // 增加一點觸覺回饋，讓使用者感覺到「操作被攔截」
     HapticFeedback.mediumImpact();
 
     return showDialog(
       context: context,
       barrierDismissible: false, // 強制使用者必須閱讀
-      builder: (context) => BackupErrorDialog(exception: e),
+        builder: (context) => BackupErrorDialog(
+          exception: e,
+          onRetry: onRetry,
+        ),
     );
   }
 
@@ -39,11 +51,11 @@ class BackupErrorDialog extends StatelessWidget {
         actionLabel: "重試",
       ),
       BackupExceptionType.permission: _ErrorContent(
-        title: "帳號登入失效",
-        message: "您的雲端帳號登入資訊已過期，請重新登入以獲得存取權限。",
+        title: "雲端服務無法使用",
+        message: exception.message,
         icon: Icons.lock_person_rounded,
         color: Colors.red,
-        actionLabel: "重新登入",
+        actionLabel: "我知道了",
       ),
       BackupExceptionType.incomplete: _ErrorContent(
         title: "備份狀態異常",
@@ -54,7 +66,7 @@ class BackupErrorDialog extends StatelessWidget {
       ),
       BackupExceptionType.unknown: _ErrorContent(
         title: "發生未知的錯誤",
-        message: "處理備份時遇到非預期錯誤。請檢查網路並再試一次。\n代碼: ${exception.originalError.runtimeType}",
+        message: "處理備份時遇到非預期錯誤。請檢查網路並稍後再試。",
         icon: Icons.error_outline_rounded,
         color: Colors.grey,
         actionLabel: "確定",
@@ -91,7 +103,19 @@ class BackupErrorDialog extends StatelessWidget {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () async {
+
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+
+              if (onRetry != null &&
+                  (exception.type == BackupExceptionType.network ||
+                      exception.type == BackupExceptionType.incomplete)) {
+
+                await onRetry!();
+              }
+            },
             child: Text(content.actionLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ),

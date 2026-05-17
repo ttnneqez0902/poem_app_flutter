@@ -8,14 +8,35 @@ enum RecordType { daily, weekly, biWeekly, monthly }
 
 // 🚀 1. 確保 ScaleType 順序與 HomeScreen 一致，避免索引位移
 enum ScaleType {
-  adct, poem, uas7, scorad, // 皮膚
-  psqi, isi, ess,          // 睡眠
-  bp_log, cat, dds, bpi,   // 慢性病與疼痛
-  phq9, gad7,              // 心理
-  vas, haq,                // 風濕/疼痛
-  bristol, ibs_sss,        // 腸胃
-  cycle,                   // 女性
-  growth                   // 兒科
+  adct,
+  poem,
+  uas7,
+  scorad, // 皮膚
+
+  psqi,
+  isi,
+  ess, // 睡眠
+
+  bp_log,
+  cat,
+  dds,
+  bpi, // 慢性病與疼痛
+
+  phq9,
+  gad7, // 心理
+
+  vas,
+  haq, // 風濕/疼痛
+
+  bristol,
+  ibs_sss, // 腸胃
+
+  cycle, // 女性
+
+  growth, // 兒科
+
+  qolie10,
+  lsss, // 神經（永遠加最後）
 }
 
 enum SyncStatus { pending, syncing, synced, failed }
@@ -34,7 +55,7 @@ class PoemRecord {
   DateTime? updatedAt;
   DateTime? lastSyncAttempt;
 
-  @enumerated
+  @Enumerated(EnumType.name)
   @Index()
   SyncStatus syncStatus = SyncStatus.pending;
 
@@ -50,11 +71,11 @@ class PoemRecord {
   @Index()
   DateTime? targetDate; // 追蹤目標日期
 
-  @enumerated
+  @Enumerated(EnumType.name)
   @Index()
   ScaleType scaleType = ScaleType.adct;
 
-  @enumerated
+  @Enumerated(EnumType.name)
   RecordType type = RecordType.weekly;
 
   int scaleVersion = 1;
@@ -85,7 +106,7 @@ class PoemRecord {
 
   String? note;
   String? imagePath;
-  bool? imageConsent = true;
+  bool imageConsent = true;
 
   @ignore
   int get totalScore => score ?? 0;
@@ -126,21 +147,33 @@ class PoemRecord {
 
   static PoemRecord fromFirestore(Map<String, dynamic> map) {
     return PoemRecord()
-      ..recordId = map['recordId']
-      ..userId = map['userId']
-      ..score = map['score']
-      ..scaleType = ScaleType.values.firstWhere((e) => e.name == map['scaleType'], orElse: () => ScaleType.adct)
-      ..targetDate = map['targetDate'] != null ? DateTime.parse(map['targetDate']) : null
-      ..updatedAt = map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : DateTime.now()
+      ..recordId = map['recordId'] ?? const Uuid().v4()
+      ..userId = map['userId']?.toString()
+      ..score = (map['score'] as num?)?.toInt()
+      ..scaleType = ScaleType.values.firstWhere(
+            (e) => e.name == (map['scaleType'] ?? ''),
+        orElse: () => ScaleType.adct,
+      )
+      ..targetDate = map['targetDate'] != null
+          ? DateTime.tryParse(map['targetDate'])
+          : null
+      ..createdAt = map['createdAt'] != null
+          ? DateTime.tryParse(map['createdAt'])
+          : DateTime.now()
+      ..updatedAt = map['updatedAt'] != null
+          ? DateTime.tryParse(map['updatedAt'])
+          : DateTime.now()
       ..isDeleted = map['isDeleted'] ?? false
-      ..answers = List<int>.from(map['answers'] ?? [])
-      ..note = map['note']
-      ..imagePath = map['imagePath']
+      ..answers = (map['answers'] as List<dynamic>? ?? [])
+          .map((e) => (e as num).toInt())
+          .toList()
+      ..note = map['note']?.toString()
+      ..imagePath = map['imagePath']?.toString()
     // 🚀 補上還原邏輯
-      ..systolic = map['systolic']
-      ..diastolic = map['diastolic']
-      ..pulse = map['pulse']
-      ..stoolType = map['stoolType']
+      ..systolic = (map['systolic'] as num?)?.toInt()
+      ..diastolic = (map['diastolic'] as num?)?.toInt()
+      ..pulse = (map['pulse'] as num?)?.toInt()
+      ..stoolType = (map['stoolType'] as num?)?.toInt()
       ..isPeriodStart = map['isPeriodStart'] ?? false
       ..height = (map['height'] as num?)?.toDouble()
       ..weight = (map['weight'] as num?)?.toDouble()
@@ -178,6 +211,14 @@ class PoemRecord {
         return "腹瀉";
       case ScaleType.growth:
         return "數據紀錄";
+      case ScaleType.qolie10:
+        if (s >= 31) return "生活影響較大";
+        if (s >= 21) return "中度影響";
+        return "影響輕微";
+      case ScaleType.lsss:
+        if (s >= 20) return "發作影響明顯";
+        if (s >= 10) return "中度影響";
+        return "控制穩定";
       default:
         return s >= 16 ? "控制不佳" : "控制良好";
     }
@@ -195,8 +236,18 @@ class PoemRecord {
       case ScaleType.gad7:
       case ScaleType.psqi:
       case ScaleType.bp_log:
-        return (severityLabel.contains("重") || severityLabel.contains("高") || severityLabel.contains("不佳"))
-            ? Colors.red : Colors.green;
+        return (severityLabel.contains("重") ||
+            severityLabel.contains("高") ||
+            severityLabel.contains("不佳"))
+            ? Colors.red
+            : Colors.green;
+
+      case ScaleType.qolie10:
+      case ScaleType.lsss:
+        return severityLabel.contains("影響")
+            ? Colors.orange
+            : Colors.green;
+
       default:
         return s >= 16 ? Colors.red : Colors.green;
     }

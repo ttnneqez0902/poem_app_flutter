@@ -35,7 +35,7 @@ final GlobalKey<ScaffoldMessengerState> messengerKey = GlobalKey<ScaffoldMesseng
 bool hasPendingSync = false;
 bool _hasTriggeredSync = false;
 String? pendingPayload;
-
+late final String myDeviceId;
 
 void handleNotificationJump(String payload) {
   // 🚀 Defensive Coding: 確保 Enum 解析永遠安全
@@ -104,6 +104,15 @@ void main() async {
 
 Future<void> _initServices() async {
   try {
+    // 🔥 1. 初始化 deviceId（最重要）
+    final prefs = await SharedPreferences.getInstance();
+
+    myDeviceId = prefs.getString('device_id') ??
+        DateTime.now().millisecondsSinceEpoch.toString();
+
+    await prefs.setString('device_id', myDeviceId);
+
+    // 🔥 2. 原本流程
     await MobileAds.instance.initialize();
     await initializeDateFormatting('zh_TW', null);
     await isarService.init();
@@ -120,6 +129,7 @@ Future<void> _initServices() async {
     );
 
     await notificationService.requestPermissions();
+
     debugPrint("✨ [System] 臨床同步引擎已就緒");
   } catch (e) {
     debugPrint("💥 [System] 初始化關鍵錯誤: $e");
@@ -209,12 +219,20 @@ class AppLifecycleHandler extends WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final autoSync = prefs.getBool('auto_sync') ?? false;
 
-    if (autoSync) {
-      Future.delayed(
-        const Duration(seconds: 1),
-            () => globalSyncTask(),
-      );
-    }
+    // 🔥 沒開自動同步 → 不做
+    if (!autoSync) return;
+
+    // 🔥 沒新資料 → 不做（超重要）
+    if (!hasPendingSync) return;
+
+    Future.delayed(
+      const Duration(seconds: 1),
+          () {
+        if (!_isSyncingGlobal) {
+          globalSyncTask();
+        }
+      },
+    );
   }
 }
 

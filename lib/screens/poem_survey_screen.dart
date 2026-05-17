@@ -470,42 +470,67 @@ class _PoemSurveyScreenState extends State<PoemSurveyScreen> {
 
     try {
       final unsynced = await isarService.getUnsyncedRecords();
-      if (unsynced.length < 2) return;
+      if (unsynced.isEmpty) return;
 
-      Map<String, List<PoemRecord>> monthlyBundles = {};
-      for (var r in unsynced) {
-        final key = "${r.targetDate?.year}_${r.targetDate?.month.toString().padLeft(2, '0')}";
-        monthlyBundles.putIfAbsent(key, () => []).add(r);
-      }
+      const int batchLimit = 400; // 🔥 安全值（Firestore 上限 500）
 
-      for (var monthKey in monthlyBundles.keys) {
-        final docRef = FirebaseFirestore.instance
-            .collection('users').doc(user.uid)
-            .collection('monthly_data').doc(monthKey);
+      for (int i = 0; i < unsynced.length; i += batchLimit) {
+        final batch = FirebaseFirestore.instance.batch();
 
-        final List<Map<String, dynamic>> jsonList =
-        monthlyBundles[monthKey]!.map((r) => r.toFirestore()).toList();
+        final chunk = unsynced.sublist(
+          i,
+          i + batchLimit > unsynced.length
+              ? unsynced.length
+              : i + batchLimit,
+        );
 
-        await docRef.set({
-          'records': FieldValue.arrayUnion(jsonList),
-          'lastUpdate': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        final syncedRecords = <PoemRecord>[];
 
-        // ✅ 修正點：直接在這一層進行批量更新，不呼叫 saveRecord
+        for (final r in chunk) {
+          if (r.isSynced) continue;
+
+          r.ensureId();
+
+          final record = r.toFirestore();
+
+          final docRef = FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('records')
+              .doc(record['id']);
+
+          batch.set(
+            docRef,
+            {
+              ...record,
+              'updatedAt': FieldValue.serverTimestamp(),
+              'deviceId': myDeviceId, // 👉 直接用 main.dart 的（因為你 import ../main.dart）
+            },
+            SetOptions(merge: true),
+          );
+
+          syncedRecords.add(r); // 🔥 只記錄有送的
+        }
+
+        if (syncedRecords.isEmpty) continue; // 🔥 沒資料就跳過
+
+        await batch.commit();
+
+        // ✅ 同步後標記為已上傳
         await isarService.isar.writeTxn(() async {
-          for (var r in monthlyBundles[monthKey]!) {
+          for (var r in syncedRecords) {
             r.isSynced = true;
-            r.ensureId(); // 確保 UUID 存在
           }
-          // 批量放入，效能極高
-          await isarService.isar.poemRecords.putAll(monthlyBundles[monthKey]!);
+          await isarService.isar.poemRecords.putAll(syncedRecords);
         });
-        debugPrint("☁️ $monthKey 同步完成");
+
+        debugPrint("☁️ 已同步 ${syncedRecords.length} 筆");
       }
     } catch (e) {
       debugPrint("❌ 同步發生錯誤: $e");
     }
   }
+
 
   void _jumpToPhotoPage(int totalPages) {
     FocusScope.of(context).unfocus(); // 🚀 關鍵：跳頁前先收起虛擬鍵盤

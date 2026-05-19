@@ -64,6 +64,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '65146427281',
     projectId: 'eczema-self-assessment',
     storageBucket: 'eczema-self-assessment.firebasestorage.app',
+    androidClientId: '65146427281-65qptfv240t4s1fblqrkt4epkn6r8m51.apps.googleusercontent.com',
+    iosClientId: '65146427281-lu0jaqgfp7t4t31cnamnn8vpu88uft67.apps.googleusercontent.com',
     iosBundleId: 'com.charlie.eczemaSelfAssessment2026',
   );
 
@@ -73,6 +75,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '65146427281',
     projectId: 'eczema-self-assessment',
     storageBucket: 'eczema-self-assessment.firebasestorage.app',
+    androidClientId: '65146427281-65qptfv240t4s1fblqrkt4epkn6r8m51.apps.googleusercontent.com',
+    iosClientId: '65146427281-jfvn2hh6ieqti07ho74qled2lrb2gm2o.apps.googleusercontent.com',
     iosBundleId: 'com.example.eczemaSelfAssessment',
   );
 
@@ -85,4 +89,5 @@ class DefaultFirebaseOptions {
     storageBucket: 'eczema-self-assessment.firebasestorage.app',
     measurementId: 'G-XQRN3HD8WX',
   );
+
 }

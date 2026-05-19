@@ -858,6 +858,7 @@ class CloudBackupService {
   }
 
   Future<void> _assertICloudAvailable() async {
+
     if (!Platform.isIOS) {
       throw BackupException(
         BackupExceptionType.permission,
@@ -866,12 +867,19 @@ class CloudBackupService {
     }
 
     try {
+
       await ICloudStorage.gather(
         containerId: _iCloudContainer,
       ).timeout(
         const Duration(seconds: 20),
       );
+
+      debugPrint("🚀 iCloud available");
+
     } catch (e) {
+
+      debugPrint("🚀 iCloud error=$e");
+
       throw BackupException(
         BackupExceptionType.permission,
         "請確認 iCloud Drive 已開啟",

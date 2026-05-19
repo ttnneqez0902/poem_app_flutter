@@ -568,26 +568,29 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleManualBackup() async {
-    final GoogleSignInAccount? account =
-        await _googleSignIn.signInSilently() ??
-            await _googleSignIn.signIn();
 
-    if (account == null) return;
     if (_isSyncing) return;
+
+    // 🚀 iOS 不需要 Google 登入
+    if (!Platform.isIOS) {
+
+      final GoogleSignInAccount? account =
+          await _googleSignIn.signInSilently() ??
+              await _googleSignIn.signIn();
+
+      if (account == null) return;
+    }
 
     final docDir = await getApplicationDocumentsDirectory();
 
-    // 🚀 改抓整個 isar 資料夾
     final isarDir = Directory(
       p.join(docDir.path, 'isar'),
     );
 
-    // 🚀 照片資料夾
     final photoDir = Directory(
       p.join(docDir.path, 'photos'),
     );
 
-    // 🚀 計算總大小
     final int isarSize =
     await _calculateDirectorySize(isarDir);
 
@@ -597,11 +600,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final int totalSize =
         isarSize + photoSize;
 
-    // 🚀 避免顯示 0 B
     final String sizeText =
     totalSize == 0
         ? "小於 1 KB"
         : _formatBytes(totalSize);
+
+    final providerText =
+    Platform.isIOS
+        ? "iCloud"
+        : "Google Drive";
 
     final bool confirmed =
         await showDialog<bool>(
@@ -609,7 +616,7 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (ctx) => AlertDialog(
             title: const Text("雲端備份說明"),
             content: Text(
-              "將加密備份紀錄至 Google Drive。\n\n"
+              "將加密備份紀錄至 $providerText。\n\n"
                   "📦 預估大小：$sizeText\n\n"
                   "確定開始？",
             ),
@@ -634,6 +641,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isSyncing = true);
 
     try {
+
       final prog = ValueNotifier<String>("準備中...");
       final per = ValueNotifier<double>(0.0);
 
@@ -643,6 +651,7 @@ class _HomeScreenState extends State<HomeScreen> {
         progressNotifier: prog,
         percentNotifier: per,
         action: () async {
+
           await cloudBackupService.runBackup(
             photoDir.path,
             appVersion: _appVersion,
@@ -667,21 +676,27 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+
     } catch (e) {
+
       if (mounted && e is BackupException) {
+
         await BackupErrorDialog.show(
           context,
           e,
           onRetry: () async {
+
             if (mounted) {
               setState(() => _isSyncing = false);
             }
+
             await _handleManualBackup();
           },
         );
       }
-    }
-    finally {
+
+    } finally {
+
       if (mounted) {
         setState(() => _isSyncing = false);
       }
@@ -1142,12 +1157,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showIOSBackupDialog() async {
+
+    final provider = cloudBackupService.effectiveProvider;
+
+    final providerName = switch (provider) {
+      CloudProvider.googleDrive => "Google Drive",
+      CloudProvider.iCloud => "iCloud",
+      CloudProvider.none => "未設定",
+    };
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("☁️ 雲端備份"),
-        content: const Text(
-          "目前雲端備份功能使用 Google Drive。\n\n未來版本可能支援更多雲端服務。",
+        content: Text(
+          "目前雲端備份功能使用 $providerName。\n\n未來版本可能支援更多雲端服務。",
         ),
         actions: [
           TextButton(
